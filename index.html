@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Plant Image Keypoint Annotation Tool - For scientific annotation tasks on rapeseed datasets" />
+  <meta name="keywords" content="plant annotation,keypoint annotation,image processing,research tool" />
+  <title>Plant Image Keypoint Annotation Tool</title>
+  
+  <!-- Preload fonts and icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Main stylesheet -->
+  <link rel="stylesheet" href="/src/styles/main.css" />
+</head>
+<body>
+  <!-- 全屏加载指示器 -->
+  <div id="fullscreen-loading" class="fullscreen-loading">
+    <div class="loading-spinner"></div>
+    <h1 class="loading-title">Plant Annotation System</h1>
+    <p class="loading-subtitle" id="loading-subtitle">Initializing system...</p>
+    <p class="loading-details" id="loading-details">Setting up the annotation environment</p>
+    <div class="loading-progress">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <p id="progress-text">0%</p>
+    </div>
+  </div>
+
+  <!-- Application main container -->
+  <div id="app">
+    <!-- Loading State (Legacy) -->
+    <div id="loading-screen" class="loading-screen" style="display: none;">
+      <div class="loading-spinner"></div>
+      <p>Initializing annotation tool...</p>
+    </div>
+
+    <!-- Main Application Interface -->
+    <div id="main-app" class="main-app" style="display: none;">
+      <!-- Application Header -->
+      <header class="app-header">
+        <h1 class="app-title">Plant Image Keypoint Annotation Tool</h1>
+        <div class="header-controls">
+          <button id="select-dataset-btn" class="btn btn-primary">Connect to Dataset</button>
+          <div class="progress-info">
+            <span id="progress-text">No dataset loaded</span>
+          </div>
+        </div>
+      </header>
+      
+      <!-- Main Content Area -->
+      <main class="app-main">
+        <!-- Left Plant List Panel -->
+        <aside class="plant-list-panel">
+          <div class="panel-header">
+            <h2>Plant List</h2>
+            <div class="search-controls">
+              <input type="text" id="plant-search" placeholder="Search plants..." />
+              <select id="status-filter">
+                <option value="all">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="in-progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="skipped">Skipped</option>
+              </select>
+            </div>
+          </div>
+          
+          <!-- Statistics Progress Bar -->
+          <div id="progress-stats" class="progress-stats-sidebar">
+            <div class="progress-container">
+              <div class="progress-info-bar">
+                <div class="progress-text">
+                  <span class="stats-label">Progress:</span>
+                  <span id="completed-images-count" class="stats-number">0</span>
+                  <span class="stats-separator">/</span>
+                  <span id="total-images-count" class="stats-number">0</span>
+                  <span class="stats-unit">images</span>
+                </div>
+                <div class="progress-percentage">
+                  <span id="completion-percentage">0%</span>
+                </div>
+              </div>
+              <div class="progress-bar-container">
+                <div class="progress-bar">
+                  <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
+                </div>
+              </div>
+              <div class="progress-details">
+                <span id="completed-plants-count" class="stats-detail">0 plants completed</span>
+                <span class="stats-separator">•</span>
+                <span id="total-plants-count" class="stats-detail">Total 0 plants</span>
+              </div>
+            </div>
+          </div>
+          
+          <div id="plant-list-container" class="plant-list-container">
+            <!-- Plant list will be dynamically generated here -->
+          </div>
+        </aside>
+        
+        <!-- Center Thumbnail Area -->
+        <section class="thumbnail-panel">
+          <div class="section-header">
+            <h3 id="current-plant-title">Please Select a Plant</h3>
+          </div>
+          
+          <!-- View Angle Selection Area -->
+          <div id="view-angle-section" class="view-angle-section" style="display: none;">
+            <div class="view-angle-header">
+              <h4>Select View</h4>
+              <span id="view-angle-info" class="view-angle-info"></span>
+            </div>
+            <div class="view-angle-buttons">
+              <button class="btn btn-view-angle" data-view-angle="sv-000">Front View (sv-000)</button>
+              <button class="btn btn-view-angle" data-view-angle="sv-045">45-degree View (sv-045)</button>
+              <button class="btn btn-view-angle" data-view-angle="sv-090">Side View (sv-090)</button>
+            </div>
+          </div>
+          
+          <div id="thumbnail-container" class="thumbnail-container">
+            <!-- Thumbnails will be dynamically generated here -->
+          </div>
+        </section>
+        
+        <!-- Right-side Working Area -->
+        <section class="annotation-panel">          
+          <!-- Annotation Working Area -->
+          <div class="annotation-workspace">
+            <div id="canvas-container" class="canvas-container">
+              <canvas id="annotation-canvas" class="annotation-canvas"></canvas>
+              
+              <!-- Branch Point Preview Window -->
+              <div id="branch-point-preview" class="branch-point-preview hidden">
+                <div class="preview-header">
+                  <span id="preview-title">Branch Point Preview</span>
+                  <button class="close-btn" onclick="toggleBranchPointPreview(false)" title="Close Preview">×</button>
+                </div>
+                <div class="preview-controls">
+                  <label for="zoom-slider">Zoom:</label>
+                  <input type="range" id="zoom-slider" min="1" max="5" step="0.5" value="2" class="zoom-slider">
+                  <span id="zoom-value">2x</span>
+                </div>
+                <div class="preview-canvas-container">
+                  <canvas id="preview-canvas" class="preview-canvas"></canvas>
+                  <div id="preview-loading" class="preview-loading">Loading...</div>
+                  <div id="no-preview" class="no-preview" style="display: none;">No Preview Available</div>
+                </div>
+              </div>
+              
+              <div class="canvas-overlay">
+                <div class="zoom-info">
+                  <div id="zoom-indicator" class="zoom-indicator"></div>
+                  <span id="zoom-level">100%</span>
+                </div>
+                <div class="annotation-controls">
+                  <button id="toggle-preview-btn" class="btn btn-icon" title="Toggle Branch Point Preview">👁</button>
+                  <button id="undo-btn" class="btn btn-icon" title="Undo (Ctrl+Z)">↶</button>
+                  <button id="redo-btn" class="btn btn-icon" title="Redo (Ctrl+Y)">↷</button>
+                  <button id="clear-all-btn" class="btn btn-icon" title="Clear All">🗑</button>
+                </div>
+              </div>
+              
+              <!-- Annotation Point Size Info -->
+              <div id="annotation-size-info" class="annotation-size-info">
+                <span id="size-info-text">Annotation Point: Normal Size</span>
+              </div>
+            </div>
+            
+            <!-- Instruction Panel -->
+            <div class="instruction-panel">
+              <!-- Toolbar -->
+              <div class="toolbar-section">
+                <h4>Toolbar</h4>
+                <div class="view-controls-section">
+                  <button id="reset-zoom-btn" class="btn btn-small" title="Reset zoom (R)">Reset View</button>
+                  <button id="fit-screen-btn" class="btn btn-small" title="Fit to screen">Fit Screen</button>
+                </div>
+                <div class="direction-controls-section" style="margin-top: 10px;">
+                  <button id="auto-direction-btn" class="btn btn-small btn-special" title="Start automated direction selection">Auto Direction</button>
+                </div>
+                <div class="zoom-lock-section" style="margin-top: 10px;">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="zoom-lock-checkbox">
+                    <span>Lock Zoom</span>
+                  </label>
+                  <div class="zoom-lock-controls" style="margin-top: 5px;">
+                    <input type="number" id="zoom-lock-value" min="0.1" max="10" step="0.1" value="2.5" style="width: 60px;">
+                    <span style="font-size: 12px;">x</span>
+                  </div>
+                </div>
+                <div class="auto-move-section" style="margin-top: 10px;">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="auto-move-checkbox">
+                    <span>Auto Move</span>
+                  </label>
+                  <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">
+                    Auto move to next expected position after annotation
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Time Series Annotation Status -->
+              <div id="annotation-status-section" class="annotation-status-section" style="display: none;">
+                <h4>Annotation Status</h4>
+                <div id="annotation-metadata" class="annotation-metadata">
+                  <div class="status-item">
+                    <span class="status-label">Current Image:</span>
+                    <span id="current-image-index" class="status-value">-</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">Annotation Source:</span>
+                    <span id="annotation-source" class="status-value">-</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">Time Series:</span>
+                    <span id="time-series-stats" class="status-value">-</span>
+                  </div>
+                </div>
+                <div id="manual-adjustment-notice" class="manual-adjustment-notice" style="display: none;">
+                  <p>🔧 <strong>Manual Adjustment Mode</strong></p>
+                  <p>You are adjusting the annotation for the middle time point. After adjustment, it will automatically apply to subsequent time points.</p>
+                </div>
+              </div>
+
+              <!-- Instructions Section -->
+              <div class="instructions-section">
+                <h4>Instructions</h4>
+                <ul>
+                  <li>Click empty area: Create directionless annotation point (purple)</li>
+                  <li>Drag empty area: Create angle-directed annotation point (green)</li>
+                  <li>Click annotation point: Select and enter angle direction mode</li>
+                  <li>Direction selection: Move mouse to specify angle, left click confirm, right click cancel</li>
+                  <li>Automated direction selection: Batch set angles for directionless and legacy points</li>
+                  <li>Right-click annotation point: Delete annotation point</li>
+                  <li>Drag annotation point: Move position</li>
+                  <li>Shift + Drag: Pan image</li>
+                  <li>Mouse wheel: Zoom image</li>
+                  <li>R key: Reset view</li>
+                  <li>Ctrl+Z/Y: Undo/Redo</li>
+                  <li>← → Arrow keys: Switch to previous/next image</li>
+                </ul>
+              </div>
+
+              <div class="direction-legend" style="margin: var(--spacing-md) 0; padding: var(--spacing-sm); background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 0.375rem;">
+                <h5 style="margin: 0 0 var(--spacing-xs) 0; font-size: var(--font-size-sm); font-weight: 600;">Direction Annotation Legend:</h5>
+                <div style="display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-xs);">
+                  <span style="display: inline-block; width: 12px; height: 12px; min-width: 12px; min-height: 12px; background: #10b981; border-radius: 50%; flex-shrink: 0;"></span>
+                  <span style="font-size: var(--font-size-xs);">🎯 Angle direction annotation (green dashed arrow shows precise direction)</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-xs);">
+                  <span style="display: inline-block; width: 12px; height: 12px; min-width: 12px; min-height: 12px; background: #ff6666; border-radius: 50%; flex-shrink: 0;"></span>
+                  <span style="font-size: var(--font-size-xs);">◀ Legacy left-side annotation (needs upgrade to angle format)</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-xs);">
+                  <span style="display: inline-block; width: 12px; height: 12px; min-width: 12px; min-height: 12px; background: #6666ff; border-radius: 50%; flex-shrink: 0;"></span>
+                  <span style="font-size: var(--font-size-xs);">▶ Legacy right-side annotation (needs upgrade to angle format)</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-xs);">
+                  <span style="display: inline-block; width: 12px; height: 12px; min-width: 12px; min-height: 12px; background: #9333ea; border-radius: 50%; flex-shrink: 0;"></span>
+                  <span style="font-size: var(--font-size-xs);">⚪ Directionless annotation point (click to create, set direction via automation)</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-xs);">
+                  <span style="display: inline-block; width: 12px; height: 12px; min-width: 12px; min-height: 12px; background: #f59e0b; border-radius: 50%; flex-shrink: 0;"></span>
+                  <span style="font-size: var(--font-size-xs);">⭐ Currently selected annotation point (orange preview line)</span>
+                </div>
+              </div>
+
+              <div class="annotation-actions">
+                <button id="save-annotation-btn" class="btn btn-primary">
+                  Save Annotation
+                </button>
+                <button id="complete-plant-btn" class="btn btn-success">
+                  Complete Plant
+                </button>
+                <button id="export-data-btn" class="btn btn-secondary">
+                  Export Annotation Data
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    
+    <!-- Error Prompt Modal -->
+    <div id="error-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <h3>Error Prompt</h3>
+        <p id="error-message"></p>
+        <button id="error-close-btn" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+    
+    <!-- Save Annotation Confirmation Modal -->
+    <div id="save-annotation-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 500px;">
+        <h3>Save Annotation</h3>
+        <p>How do you want to save these annotations?</p>
+        <div style="margin: 20px 0;">
+          <label style="display: block; margin-bottom: 15px; cursor: pointer;">
+            <input type="radio" name="save-mode" value="current-only" style="margin-right: 10px;">
+            <strong>Save to Current Image Only</strong>
+            <div style="font-size: 14px; color: #6b7280; margin-left: 25px; margin-top: 5px;">
+              Annotations will only apply to the currently selected image
+            </div>
+          </label>
+          <label style="display: block; margin-bottom: 15px; cursor: pointer;">
+            <input type="radio" name="save-mode" value="propagate" checked style="margin-right: 10px;">
+            <strong>Propagate to Time Series</strong>
+            <div style="font-size: 14px; color: #6b7280; margin-left: 25px; margin-top: 5px;">
+              Annotations will propagate to subsequent time point images (recommended)
+            </div>
+          </label>
+        </div>
+        
+        <!-- Direction Save Options -->
+        <div id="direction-save-options" style="margin: 20px 0; padding: 15px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+          <h4 style="margin: 0 0 10px 0; font-size: 14px;">Direction Information Saving</h4>
+          <label style="display: block; margin-bottom: 10px; cursor: pointer;">
+            <input type="radio" name="direction-save-mode" value="directions-only" style="margin-right: 10px;">
+            <strong>Save Directions Only</strong>
+            <div style="font-size: 12px; color: #6b7280; margin-left: 25px; margin-top: 3px;">
+              Save only the angle directions, position information remains unchanged
+            </div>
+          </label>
+          <label style="display: block; margin-bottom: 10px; cursor: pointer;">
+            <input type="radio" name="direction-save-mode" value="positions-and-directions" checked style="margin-right: 10px;">
+            <strong>Save Positions and Directions</strong>
+            <div style="font-size: 12px; color: #6b7280; margin-left: 25px; margin-top: 3px;">
+              Save the complete annotation information (recommended)
+            </div>
+          </label>
+        </div>
+        
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+          <button id="save-annotation-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button id="save-annotation-confirm-btn" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skip Plant Modal -->
+    <div id="skip-plant-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Skip Plant</h3>
+          <button class="modal-close" id="skip-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to skip the plant <strong id="skip-plant-name"></strong>?</p>
+          <div class="form-group">
+            <label for="skip-reason">Skip Reason (required):</label>
+            <textarea id="skip-reason" placeholder="Enter the reason for skipping, such as: poor image quality, plant damage, incomplete data, etc..." rows="3" required></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="skip-confirm-btn" class="btn btn-warning">Confirm Skip</button>
+          <button id="skip-cancel-btn" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Application Script -->
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "plant-annotation-backend",
+  "version": "1.0.0",
+  "description": "Backend server for plant annotation system",
+  "main": "backend-server.js",
+  "scripts": {
+    "start": "node backend-server.js",
+    "dev": "nodemon backend-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

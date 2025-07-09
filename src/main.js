@@ -1,0 +1,3398 @@
+/**
+ * 植物图像关键点标注工具 - 主应用入口
+ * 
+ * 功能：
+ * - 应用初始化和加载
+ * - File System Access API 支持检测
+ * - 基础UI交互绑定
+ * - 浏览器兼容性检查
+ */
+
+import { FileSystemManager } from './core/FileSystemManager.js';
+import { PlantDataManager } from './core/PlantDataManager.js';
+import { AnnotationTool } from './core/AnnotationTool.js';
+import { BranchPointPreviewManager } from './core/BranchPointPreviewManager.js';
+
+// DOM元素引用
+let app = null;
+let loadingScreen = null;
+let mainApp = null;
+let errorModal = null;
+
+// 管理器实例
+let plantDataManager = null;
+let annotationTool = null;
+let branchPointPreviewManager = null;
+let currentDataset = null;
+
+// 应用状态
+const appState = {
+  isInitialized: false,
+  hasBackendAccess: false,
+  currentDatasetPath: null,
+  plants: [],
+  currentPlant: null,
+  currentImage: null,
+  annotations: new Map()
+};
+
+/**
+ * 应用初始化
+ */
+async function initializeApp() {
+  console.log('初始化植物图像关键点标注工具...');
+  
+  try {
+    // 全屏加载进度管理
+    updateFullscreenLoading(10, 'Initializing managers...', 'Setting up core components');
+    
+    // 获取DOM元素引用
+    app = document.getElementById('app');
+    loadingScreen = document.getElementById('loading-screen');
+    mainApp = document.getElementById('main-app');
+    errorModal = document.getElementById('error-modal');
+    
+    updateFullscreenLoading(20, 'Creating data managers...', 'Initializing plant data manager');
+    
+    // 初始化管理器
+    plantDataManager = new PlantDataManager();
+
+    // 注意：不在这里初始化annotationStorage，等到选择数据集时再初始化
+    
+    updateFullscreenLoading(30, 'Setting up window objects...', 'Making managers globally available');
+    
+    // 立即设置window对象，确保其他模块可以访问
+    window.PlantAnnotationTool = {
+      appState,
+      plantDataManager,
+      annotationTool: null, // 稍后设置
+      showError,
+      hideError,
+      updateProgressInfo
+    };
+    
+    updateFullscreenLoading(40, 'Initializing annotation tool...', 'Setting up the annotation interface');
+    
+    // 初始化标注工具
+    try {
+      console.log('[调试] 在initializeApp开始时初始化AnnotationTool');
+      annotationTool = new AnnotationTool('annotation-canvas');
+      window.PlantAnnotationTool.annotationTool = annotationTool;
+    } catch (error) {
+      console.warn('AnnotationTool初始化延迟:', error.message);
+      // Canvas可能还没有准备好，稍后再试
+    }
+    
+    updateFullscreenLoading(50, 'Setting up preview manager...', 'Initializing branch point preview functionality');
+    
+    // 初始化分支点预览管理器
+    try {
+      branchPointPreviewManager = new BranchPointPreviewManager();
+      branchPointPreviewManager.setPlantDataManager(plantDataManager);
+      window.PlantAnnotationTool.branchPointPreviewManager = branchPointPreviewManager;
+    } catch (error) {
+      console.warn('BranchPointPreviewManager初始化延迟:', error.message);
+    }
+    
+    updateFullscreenLoading(60, 'Checking compatibility...', 'Verifying browser support and backend connection');
+    
+    // 检查浏览器兼容性
+    await checkBrowserCompatibility();
+    
+    updateFullscreenLoading(70, 'Setting up interface...', 'Binding event listeners and UI components');
+    
+    // 绑定基础事件监听器
+    bindEventListeners();
+    
+    updateFullscreenLoading(80, 'Finalizing setup...', 'Completing initialization process');
+    
+    // 模拟加载过程
+    await simulateLoading();
+    
+    // 显示主应用界面
+    showMainApp();
+    
+    // 确保标注工具已初始化（避免重复初始化）
+    if (!annotationTool) {
+      try {
+        console.log('[调试] 在initializeApp中初始化AnnotationTool');
+        annotationTool = new AnnotationTool('annotation-canvas');
+        window.PlantAnnotationTool.annotationTool = annotationTool;
+      } catch (error) {
+        console.error('无法初始化AnnotationTool:', error);
+      }
+    } else {
+      console.log('[调试] AnnotationTool已存在，跳过初始化');
+    }
+    
+    updateFullscreenLoading(90, 'Connecting to dataset...', 'Automatically connecting to plant dataset');
+    
+    // 自动连接数据集
+    setTimeout(async () => {
+      try {
+        await autoConnectDataset();
+      } catch (error) {
+        console.error('自动连接数据集失败:', error);
+        hideFullscreenLoading();
+        showError('自动连接数据集失败', error.message);
+      }
+    }, 500); // 给用户看到最后的加载进度
+    
+    appState.isInitialized = true;
+    console.log('应用初始化完成');
+    
+  } catch (error) {
+    console.error('应用初始化失败:', error);
+    hideFullscreenLoading();
+    showError('应用初始化失败', error.message);
+  }
+}
+
+/**
+ * 检查浏览器兼容性
+ */
+async function checkBrowserCompatibility() {
+  console.log('检查浏览器兼容性...');
+  
+  // 检查后端服务连接
+  try {
+    const isConnected = await plantDataManager.fileSystemManager.checkConnection();
+    if (isConnected) {
+      await plantDataManager.fileSystemManager.initialize();
+      appState.hasBackendAccess = true;
+      console.log('✅ 后端服务连接成功');
+    } else {
+      throw new Error('后端服务不可用');
+    }
+  } catch (error) {
+    appState.hasBackendAccess = false;
+    const errorMessage = error.message.includes('fetch') || error.message.includes('ERR_CONNECTION_REFUSED') ?
+      '后端服务未启动，请运行 ./start-backend.sh 启动服务器' :
+      error.message;
+    console.warn('❌ 后端服务连接失败:', errorMessage);
+  }
+  
+  // 检查其他必要的API
+  const requiredAPIs = [
+    { name: 'Canvas API', check: () => !!document.createElement('canvas').getContext },
+    { name: 'IndexedDB', check: () => !!window.indexedDB },
+    { name: 'Web Workers', check: () => !!window.Worker },
+    { name: 'Intersection Observer', check: () => !!window.IntersectionObserver }
+  ];
+  
+  const unsupportedAPIs = requiredAPIs.filter(api => !api.check());
+  
+  if (unsupportedAPIs.length > 0) {
+    const missingAPIs = unsupportedAPIs.map(api => api.name).join(', ');
+    throw new Error(`浏览器不支持以下必要API: ${missingAPIs}`);
+  }
+  
+  console.log('✅ 浏览器兼容性检查通过');
+}
+
+/**
+ * 绑定事件监听器
+ */
+function bindEventListeners() {
+  console.log('绑定事件监听器...');
+  
+  // 选择数据集按钮
+  const selectDatasetBtn = document.getElementById('select-dataset-btn');
+  if (selectDatasetBtn) {
+    selectDatasetBtn.addEventListener('click', handleSelectDataset);
+  }
+  
+  // 错误模态框关闭按钮
+  const errorCloseBtn = document.getElementById('error-close-btn');
+  if (errorCloseBtn) {
+    errorCloseBtn.addEventListener('click', hideError);
+  }
+  
+  // 视图控制按钮
+  const resetZoomBtn = document.getElementById('reset-zoom-btn');
+  if (resetZoomBtn) {
+    resetZoomBtn.addEventListener('click', () => {
+      if (annotationTool) {
+        annotationTool.resetView();
+      }
+    });
+  }
+  
+  const fitScreenBtn = document.getElementById('fit-screen-btn');
+  if (fitScreenBtn) {
+    fitScreenBtn.addEventListener('click', () => {
+      if (annotationTool) {
+        annotationTool.fitToScreen();
+      }
+    });
+  }
+  
+  // 视角选择按钮事件委托
+  document.addEventListener('click', (event) => {
+    if (event.target.classList.contains('btn-view-angle')) {
+      const viewAngle = event.target.dataset.viewAngle;
+      handleViewAngleSelect(viewAngle);
+    }
+  });
+  
+  // 标注控制按钮
+  const undoBtn = document.getElementById('undo-btn');
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => {
+      if (annotationTool) {
+        annotationTool.undo();
+      }
+    });
+  }
+  
+  const redoBtn = document.getElementById('redo-btn');
+  if (redoBtn) {
+    redoBtn.addEventListener('click', () => {
+      if (annotationTool) {
+        annotationTool.redo();
+      }
+    });
+  }
+  
+  const clearAllBtn = document.getElementById('clear-all-btn');
+  if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', () => {
+      if (annotationTool && confirm('确定要清除所有标注点吗？')) {
+        annotationTool.clearKeypoints();
+      }
+    });
+  }
+  
+  // 分支点预览切换按钮
+  const togglePreviewBtn = document.getElementById('toggle-preview-btn');
+  if (togglePreviewBtn) {
+    togglePreviewBtn.addEventListener('click', () => {
+      if (branchPointPreviewManager) {
+        branchPointPreviewManager.toggleVisibility();
+      }
+    });
+  }
+
+
+  
+  // 自动化方向选择按钮
+  const autoDirectionBtn = document.getElementById('auto-direction-btn');
+  if (autoDirectionBtn) {
+    autoDirectionBtn.addEventListener('click', handleAutoDirectionSelection);
+  }
+
+  // 锁定倍数控件
+  const zoomLockCheckbox = document.getElementById('zoom-lock-checkbox');
+  const zoomLockValue = document.getElementById('zoom-lock-value');
+  if (zoomLockCheckbox && zoomLockValue) {
+    zoomLockCheckbox.addEventListener('change', handleZoomLockChange);
+    zoomLockValue.addEventListener('change', handleZoomLockValueChange);
+  }
+
+  // 自动切换到预期位置控件
+  const autoMoveCheckbox = document.getElementById('auto-move-checkbox');
+  if (autoMoveCheckbox) {
+    autoMoveCheckbox.addEventListener('change', handleAutoMoveChange);
+  }
+
+  // 跳过植株模态框事件
+  const skipModalClose = document.getElementById('skip-modal-close');
+  const skipCancelBtn = document.getElementById('skip-cancel-btn');
+  const skipConfirmBtn = document.getElementById('skip-confirm-btn');
+
+  if (skipModalClose) {
+    skipModalClose.addEventListener('click', hideSkipPlantModal);
+  }
+
+  if (skipCancelBtn) {
+    skipCancelBtn.addEventListener('click', hideSkipPlantModal);
+  }
+
+  if (skipConfirmBtn) {
+    skipConfirmBtn.addEventListener('click', confirmSkipPlant);
+  }
+
+  // 模态框背景点击关闭
+  const skipModal = document.getElementById('skip-plant-modal');
+  if (skipModal) {
+    skipModal.addEventListener('click', (e) => {
+      if (e.target === skipModal) {
+        hideSkipPlantModal();
+      }
+    });
+  }
+
+  // 状态过滤器
+  const statusFilter = document.getElementById('status-filter');
+  if (statusFilter) {
+    statusFilter.addEventListener('change', handleStatusFilterChange);
+  }
+
+  // 植株搜索
+  const plantSearch = document.getElementById('plant-search');
+  if (plantSearch) {
+    plantSearch.addEventListener('input', handlePlantSearchInput);
+  }
+  
+  // 标注操作按钮
+  const saveAnnotationBtn = document.getElementById('save-annotation-btn');
+  if (saveAnnotationBtn) {
+    saveAnnotationBtn.addEventListener('click', handleSaveAnnotation);
+  }
+  
+  // 保存标注模态框事件
+  const saveAnnotationCancelBtn = document.getElementById('save-annotation-cancel-btn');
+  if (saveAnnotationCancelBtn) {
+    saveAnnotationCancelBtn.addEventListener('click', hideSaveAnnotationModal);
+  }
+  
+  const saveAnnotationConfirmBtn = document.getElementById('save-annotation-confirm-btn');
+  if (saveAnnotationConfirmBtn) {
+    saveAnnotationConfirmBtn.addEventListener('click', () => {
+      const selectedMode = document.querySelector('input[name="save-mode"]:checked');
+      if (selectedMode) {
+        const isManualAdjustment = selectedMode.value === 'current-only';
+        performSaveAnnotation(isManualAdjustment);
+      }
+    });
+  }
+  
+  const completePlantBtn = document.getElementById('complete-plant-btn');
+  if (completePlantBtn) {
+    completePlantBtn.addEventListener('click', handleCompletePlant);
+  }
+  
+  const exportDataBtn = document.getElementById('export-data-btn');
+  if (exportDataBtn) {
+    exportDataBtn.addEventListener('click', handleExportData);
+  }
+  
+  // 键盘快捷键
+  document.addEventListener('keydown', handleKeyboardShortcuts);
+  
+  // 防止右键菜单（在标注区域）
+  const canvasContainer = document.getElementById('canvas-container');
+  if (canvasContainer) {
+    canvasContainer.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  
+  // 植物更新事件监听
+  document.addEventListener('plantUpdated', handlePlantUpdated);
+  
+  // 模态框背景点击关闭事件
+  const errorModal = document.getElementById('error-modal');
+  if (errorModal) {
+    errorModal.addEventListener('click', (e) => {
+      if (e.target === errorModal) {
+        hideError();
+      }
+    });
+  }
+  
+  const saveAnnotationModal = document.getElementById('save-annotation-modal');
+  if (saveAnnotationModal) {
+    saveAnnotationModal.addEventListener('click', (e) => {
+      if (e.target === saveAnnotationModal) {
+        hideSaveAnnotationModal();
+      }
+    });
+  }
+  
+  console.log('✅ 事件监听器绑定完成');
+}
+
+/**
+ * 处理数据集选择
+ */
+async function handleSelectDataset() {
+  console.log('开始连接数据集...');
+  
+  // 确保plantDataManager已初始化
+  if (!plantDataManager) {
+    console.error('PlantDataManager未初始化');
+    showError('系统错误', '数据管理器未正确初始化，请刷新页面重试');
+    return;
+  }
+  
+  try {
+    // 显示加载状态
+    const selectBtn = document.getElementById('select-dataset-btn');
+    const originalText = selectBtn.textContent;
+    selectBtn.textContent = 'Connecting...';
+    selectBtn.disabled = true;
+    
+    // 检查后端连接
+    updateProgressInfo('Connecting to backend...');
+    const datasetInfo = await plantDataManager.fileSystemManager.getDatasetInfo();
+    
+    if (!datasetInfo) {
+      throw new Error('无法连接到后端服务，请确保后端服务已启动');
+    }
+
+    console.log('连接的数据集:', datasetInfo.datasetPath);
+
+    // 验证目录结构
+    await validateDatasetStructure();
+
+    // 使用PlantDataManager加载数据集
+    updateProgressInfo('Loading plants...');
+    const plants = await plantDataManager.loadDataset();
+    
+    // 更新应用状态
+    appState.currentDatasetPath = datasetInfo.datasetPath;
+    appState.plants = plants;
+    currentDataset = {
+      path: datasetInfo.datasetPath,
+      name: 'Brassica napus dataset',
+      plantCount: plants.length
+    };
+    
+    // 更新UI
+    updateProgressInfo(`Loaded ${plants.length} plants`);
+    selectBtn.textContent = 'Reconnect Dataset';
+    
+    // 显示植物列表
+    renderPlantList(plants);
+    
+    // 初始更新统计显示
+    updateProgressStats();
+    
+    console.log(`成功加载数据集: ${plants.length} 个植物`);
+    
+  } catch (error) {
+    console.error('选择数据集失败:', error);
+    
+    showError('连接数据集失败', error.message);
+  } finally {
+    // 恢复按钮状态
+    const selectBtn = document.getElementById('select-dataset-btn');
+    selectBtn.textContent = appState.currentDatasetPath ? '重新连接数据集' : '连接数据集';
+    selectBtn.disabled = false;
+  }
+}
+
+/**
+ * 验证数据集目录结构
+ */
+async function validateDatasetStructure() {
+  console.log('验证数据集结构...');
+  
+  try {
+    // 通过HTTP后端获取植物文件夹列表
+    const plantDirectories = await plantDataManager.fileSystemManager.traversePlantDirectories();
+    
+    if (!plantDirectories || plantDirectories.length === 0) {
+      throw new Error('数据集中未找到植物文件夹（以BR开头的文件夹）');
+    }
+    
+    // 验证至少一个植物文件夹的结构
+    const firstPlant = plantDirectories[0];
+    const imagesByView = await plantDataManager.fileSystemManager.readPlantImages(firstPlant.id);
+    
+    if (!imagesByView || Object.keys(imagesByView).length === 0) {
+      throw new Error(`植物文件夹 ${firstPlant.id} 中未找到有效的视角目录`);
+    }
+    
+    // 检查是否有sv-000视角
+    if (!imagesByView['sv-000'] || imagesByView['sv-000'].length === 0) {
+      throw new Error(`植物文件夹 ${firstPlant.id} 中未找到 sv-000 视角图像`);
+    }
+    
+    console.log(`✅ 数据集结构验证通过，发现 ${plantDirectories.length} 个植物文件夹`);
+    
+  } catch (error) {
+    console.error('数据集结构验证失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 更新统计进度条显示
+ */
+function updateProgressStats() {
+  if (!plantDataManager) {
+    hideProgressStats();
+    return;
+  }
+
+  const progressStats = plantDataManager.getProgress();
+  const imageStats = progressStats.images;
+
+  // 获取DOM元素
+  const progressStatsElement = document.getElementById('progress-stats');
+  const completedImagesCount = document.getElementById('completed-images-count');
+  const totalImagesCount = document.getElementById('total-images-count');
+  const completionPercentage = document.getElementById('completion-percentage');
+  const completedPlantsCount = document.getElementById('completed-plants-count');
+  const totalPlantsCount = document.getElementById('total-plants-count');
+  const progressBarFill = document.getElementById('progress-bar-fill');
+
+  if (!progressStatsElement) return;
+
+  // 显示统计区域
+  progressStatsElement.style.display = 'block';
+
+  // 更新图片数量
+  if (completedImagesCount) {
+    completedImagesCount.textContent = imageStats.completedImages;
+  }
+  
+  if (totalImagesCount) {
+    totalImagesCount.textContent = imageStats.totalImages;
+  }
+
+  // 更新完成百分比（包含跳过的植株）
+  if (completionPercentage) {
+    completionPercentage.textContent = progressStats.completionRate + '%';
+  }
+
+  // 更新植株数量（显示总完成数，包括跳过的）
+  if (completedPlantsCount) {
+    const totalCompleted = progressStats.totalCompleted || (progressStats.completed + progressStats.skipped);
+    const skippedText = progressStats.skipped > 0 ? ` (${progressStats.skipped} skipped)` : '';
+    completedPlantsCount.textContent = `${totalCompleted} plants finished ${skippedText}`;
+  }
+
+  if (totalPlantsCount) {
+    totalPlantsCount.textContent = `Total ${imageStats.totalPlants} plants`;
+  }
+
+  // 更新进度条（使用植株完成率，包含跳过的植株）
+  if (progressBarFill) {
+    const percentage = parseFloat(progressStats.completionRate) || 0;
+    progressBarFill.style.width = percentage + '%';
+    
+    // 根据完成度改变进度条颜色
+    if (percentage >= 100) {
+      progressBarFill.style.background = 'linear-gradient(90deg, #059669 0%, #047857 100%)';
+    } else if (percentage >= 75) {
+      progressBarFill.style.background = 'linear-gradient(90deg, #10b981 0%, #059669 100%)';
+    } else if (percentage >= 50) {
+      progressBarFill.style.background = 'linear-gradient(90deg, #34d399 0%, #10b981 100%)';
+    } else if (percentage >= 25) {
+      progressBarFill.style.background = 'linear-gradient(90deg, #fbbf24 0%, #f59e0b 100%)';
+    } else {
+      progressBarFill.style.background = 'linear-gradient(90deg, #f87171 0%, #ef4444 100%)';
+    }
+  }
+
+  console.log(`统计更新: ${imageStats.completedImages}/${imageStats.totalImages} 图片 (${imageStats.completionRate}%)`);
+}
+
+/**
+ * 隐藏统计进度条
+ */
+function hideProgressStats() {
+  const progressStatsElement = document.getElementById('progress-stats');
+  if (progressStatsElement) {
+    progressStatsElement.style.display = 'none';
+  }
+}
+
+/**
+ * 渲染植物列表
+ */
+function renderPlantList(plants) {
+  const container = document.getElementById('plant-list-container');
+  if (!container) return;
+  
+  // 清空现有内容
+  container.innerHTML = '';
+  
+  if (plants.length === 0) {
+    container.innerHTML = '<div class="no-data">no data</div>';
+    return;
+  }
+  
+  // 创建植物列表项
+  plants.forEach(plant => {
+    const plantItem = createPlantListItem(plant);
+    container.appendChild(plantItem);
+  });
+  
+  // 更新统计显示
+  updateProgressStats();
+  
+  console.log(`渲染了 ${plants.length} 个植物列表项`);
+}
+
+/**
+ * 创建植物列表项
+ */
+function createPlantListItem(plant) {
+  const item = document.createElement('div');
+  item.className = 'plant-item';
+  item.dataset.plantId = plant.id;
+  
+  // 状态图标
+  const statusIcon = getStatusIcon(plant.status);
+  
+  // 图像数量信息
+  const imageCountText = plant.imageCount > 0 ? 
+    `${plant.imageCount} images` : 
+    (plant.hasImages ? 'loading...' : 'no image');
+  
+  // 视角信息
+  const viewAnglesText = plant.viewAngles.length > 0 ? 
+    `view: ${plant.viewAngles.join(', ')}` :
+    'view: checking...';
+    
+  // 选中视角信息
+  const selectedViewText = plant.selectedViewAngle ? 
+    `Choosed: ${plant.selectedViewAngle}` : '';
+  
+  // 跳过状态处理
+  const isSkipped = plant.status === 'skipped';
+  if (isSkipped) {
+    item.classList.add('skipped');
+  }
+
+  // 跳过原因显示
+  const skipReasonHtml = isSkipped && plant.skipReason ?
+    `<div class="skip-reason">skip reason: ${plant.skipReason}</div>` : '';
+
+  // 跳过按钮（只在非跳过状态下显示）
+  const skipButtonHtml = !isSkipped ?
+    `<button class="skip-button" onclick="showSkipPlantModal('${plant.id}', event)">Skip</button>` : '';
+
+  item.innerHTML = `
+    <div class="plant-item-content">
+      <div class="plant-header">
+        <div class="plant-status">${statusIcon}</div>
+        <div class="plant-id">${plant.id}</div>
+        ${skipButtonHtml}
+      </div>
+      <div class="plant-info">
+        <div class="image-count">${imageCountText}</div>
+        <div class="status-text">${getStatusText(plant.status)}</div>
+      </div>
+      <div class="plant-view-info">
+        <div class="view-angles">${viewAnglesText}</div>
+        ${selectedViewText ? `<div class="selected-view">${selectedViewText}</div>` : ''}
+      </div>
+      ${skipReasonHtml}
+    </div>
+  `;
+  
+  // 点击事件
+  item.addEventListener('click', () => handlePlantSelect(plant));
+  
+  return item;
+}
+
+/**
+ * 获取状态图标
+ */
+function getStatusIcon(status) {
+  switch (status) {
+    case 'completed':
+      return '✅';
+    case 'in-progress':
+      return '🔄';
+    case 'skipped':
+      return '⏭️';
+    case 'pending':
+    default:
+      return '⭕';
+  }
+}
+
+/**
+ * 获取状态文本
+ */
+function getStatusText(status) {
+  switch (status) {
+    case 'completed':
+      return 'Finished';
+    case 'in-progress':
+      return 'In progress';
+    case 'skipped':
+      return 'Skipped';
+    case 'pending':
+    default:
+      return 'Not started';
+  }
+}
+
+/**
+ * 处理植物选择
+ */
+async function handlePlantSelect(plant) {
+  console.log('选择植物:', plant.id);
+  
+  // 确保plantDataManager已初始化
+  if (!plantDataManager) {
+    console.error('PlantDataManager未初始化');
+    showError('系统错误', '数据管理器未正确初始化，请刷新页面重试');
+    return;
+  }
+  
+  try {
+    // 更新当前植物
+    appState.currentPlant = plant;
+    
+    // 更新UI
+    updateCurrentPlantTitle(plant);
+    updatePlantItemSelection(plant.id);
+    
+    // 加载植物图像数据（所有视角）
+    updateProgressInfo(`Loading ${plant.id} image data...`);
+    const imagesByView = await plantDataManager.getPlantImages(plant.id);
+    
+    console.log(`植物 ${plant.id} 图像数据:`, imagesByView);
+    
+    // 显示视角选择界面
+    await showViewAngleSelection(plant, imagesByView);
+    
+    updateProgressInfo(`Loaded ${plant.id} - Total ${plant.imageCount} images`);
+    
+  } catch (error) {
+    console.error('选择植物失败:', error);
+    showError('加载植物数据失败', error.message);
+  }
+}
+
+/**
+ * 显示视角选择界面
+ */
+async function showViewAngleSelection(plant, imagesByView) {
+  const viewAngleSection = document.getElementById('view-angle-section');
+  const thumbnailContainer = document.getElementById('thumbnail-container');
+  const viewAngleInfo = document.getElementById('view-angle-info');
+  
+  if (!viewAngleSection || !thumbnailContainer || !viewAngleInfo) return;
+  
+  // 显示视角选择区域
+  viewAngleSection.style.display = 'block';
+  
+  // 清空缩略图
+  thumbnailContainer.innerHTML = '<div class="no-images">Please choose view</div>';
+  
+  // 更新视角信息
+  const availableViews = Object.keys(imagesByView).filter(view => imagesByView[view].length > 0);
+  viewAngleInfo.textContent = `available view: ${availableViews.length}`;
+  
+  // 更新视角按钮状态
+  const viewAngleButtons = document.querySelectorAll('.btn-view-angle');
+  viewAngleButtons.forEach(button => {
+    const viewAngle = button.dataset.viewAngle;
+    const hasImages = imagesByView[viewAngle] && imagesByView[viewAngle].length > 0;
+    
+    button.disabled = !hasImages;
+    button.classList.remove('selected');
+    
+    // 更新按钮文本，显示图像数量
+    const imageCount = hasImages ? imagesByView[viewAngle].length : 0;
+    const buttonText = button.textContent.split('(')[0].trim();
+    button.textContent = `${buttonText} (${imageCount})`;
+    
+    if (hasImages) {
+      button.title = `${viewAngle}: ${imageCount} images`;
+    } else {
+      button.title = `${viewAngle}: no image`;
+    }
+  });
+  
+  // 如果已经选择了视角，自动选中
+  if (plant.selectedViewAngle) {
+    const selectedButton = document.querySelector(`[data-view-angle="${plant.selectedViewAngle}"]`);
+    if (selectedButton && !selectedButton.disabled) {
+      selectedButton.classList.add('selected');
+      // 显示该视角的图像
+      await renderImageThumbnails(imagesByView[plant.selectedViewAngle] || []);
+    }
+  }
+}
+
+/**
+ * 处理视角选择
+ */
+async function handleViewAngleSelect(viewAngle) {
+  console.log('选择视角:', viewAngle);
+  
+  if (!appState.currentPlant) {
+    showError('操作失败', '请先选择植物');
+    return;
+  }
+  
+  try {
+    // 更新视角按钮状态
+    const viewAngleButtons = document.querySelectorAll('.btn-view-angle');
+    viewAngleButtons.forEach(button => {
+      button.classList.remove('selected');
+      if (button.dataset.viewAngle === viewAngle) {
+        button.classList.add('selected');
+      }
+    });
+    
+    // 设置植物的选中视角
+    plantDataManager.setSelectedViewAngle(appState.currentPlant.id, viewAngle);
+    appState.currentPlant.selectedViewAngle = viewAngle;
+    
+    // 获取该视角的图像
+    updateProgressInfo(`Loading ${viewAngle} image view...`);
+    const images = await plantDataManager.getPlantImages(appState.currentPlant.id, viewAngle);
+    
+    console.log(`${viewAngle} 视角包含 ${images.length} 张图像`);
+
+    // 显示图像缩略图
+    await renderImageThumbnails(images);
+    
+    // 如果有图像，自动选择第一张（首次加载）
+    if (images.length > 0) {
+      await handleImageSelect(images[0], false);
+    }
+    
+    updateProgressInfo(`已选择 ${viewAngle} 视角 - ${images.length} 张图像`);
+    
+  } catch (error) {
+    console.error('选择视角失败:', error);
+    showError('加载视角数据失败', error.message);
+  }
+}
+
+/**
+ * 更新当前植物标题
+ */
+function updateCurrentPlantTitle(plant) {
+  const titleElement = document.getElementById('current-plant-title');
+  if (titleElement) {
+    titleElement.textContent = `Plant: ${plant.id}`;
+  }
+}
+
+/**
+ * 更新植物列表项选中状态
+ */
+function updatePlantItemSelection(selectedPlantId) {
+  // 清除所有选中状态
+  document.querySelectorAll('.plant-item').forEach(item => {
+    item.classList.remove('selected');
+  });
+  
+  // 设置新的选中状态
+  const selectedItem = document.querySelector(`[data-plant-id="${selectedPlantId}"]`);
+  if (selectedItem) {
+    selectedItem.classList.add('selected');
+  }
+}
+
+/**
+ * 渲染图像缩略图
+ */
+async function renderImageThumbnails(images) {
+  const container = document.getElementById('thumbnail-container');
+  if (!container) return;
+
+  // 清空现有内容
+  container.innerHTML = '';
+
+  if (images.length === 0) {
+    container.innerHTML = '<div class="no-images">该植物暂无图像</div>';
+    return;
+  }
+
+  // 创建缩略图（异步检查标注状态）
+  for (let i = 0; i < images.length; i++) {
+    const image = images[i];
+    const thumbnail = await createImageThumbnail(image, i === 0);
+    container.appendChild(thumbnail);
+  }
+
+  console.log(`渲染了 ${images.length} 个图像缩略图`);
+}
+
+/**
+ * 创建图像缩略图
+ */
+async function createImageThumbnail(image, isFirst = false) {
+  const thumbnail = document.createElement('div');
+  thumbnail.className = 'image-thumbnail';
+  thumbnail.dataset.imageId = image.id;
+
+  if (isFirst) {
+    thumbnail.classList.add('selected');
+  }
+
+  // 检查是否有标注
+  let hasAnnotations = false;
+  let annotationCount = 0;
+
+  try {
+    if (plantDataManager) {
+      const annotations = await plantDataManager.getImageAnnotations(image.id);
+      if (annotations && annotations.length > 0) {
+        hasAnnotations = true;
+        annotationCount = annotations.length;
+        thumbnail.classList.add('has-annotations');
+      }
+    }
+  } catch (error) {
+    // 忽略错误，继续渲染
+  }
+
+  thumbnail.innerHTML = `
+    <div class="thumbnail-image">
+      <img src="" alt="${image.name}" data-src="${image.id}" />
+      <div class="thumbnail-loading">加载中...</div>
+      ${hasAnnotations ? `<div class="annotation-badge">${annotationCount}</div>` : ''}
+    </div>
+    <div class="thumbnail-info">
+      <div class="image-time">${image.timeString}</div>
+      ${hasAnnotations ? '<div class="annotation-status">✓ 已标注</div>' : ''}
+    </div>
+  `;
+
+  // 点击事件（图片切换）
+  thumbnail.addEventListener('click', () => handleImageSelect(image, true));
+
+  // 异步加载图像
+  loadThumbnailImage(thumbnail, image);
+
+  return thumbnail;
+}
+
+/**
+ * 异步加载缩略图图像
+ */
+async function loadThumbnailImage(thumbnailElement, imageData) {
+  try {
+    const imgElement = thumbnailElement.querySelector('img');
+    const loadingElement = thumbnailElement.querySelector('.thumbnail-loading');
+    
+    // 检查plantDataManager是否已初始化
+    if (!plantDataManager || !plantDataManager.fileSystemManager) {
+      console.error('PlantDataManager或FileSystemManager未初始化');
+      loadingElement.textContent = '初始化错误';
+      loadingElement.style.color = '#dc2626';
+      return;
+    }
+    
+    // 创建图像URL
+    const imageURL = await plantDataManager.fileSystemManager.createImageURL(imageData);
+    
+    // 加载图像
+    imgElement.onload = () => {
+      loadingElement.style.display = 'none';
+      imgElement.style.display = 'block';
+    };
+    
+    imgElement.onerror = () => {
+      loadingElement.textContent = '加载失败';
+      loadingElement.style.color = '#dc2626';
+    };
+    
+    imgElement.src = imageURL;
+    
+  } catch (error) {
+    console.error('加载缩略图失败:', error);
+    const loadingElement = thumbnailElement.querySelector('.thumbnail-loading');
+    loadingElement.textContent = '加载失败';
+    loadingElement.style.color = '#dc2626';
+  }
+}
+
+/**
+ * 处理图像选择
+ */
+async function handleImageSelect(image, isImageSwitch = true) {
+  try {
+    console.log('选择图像:', image.name);
+    
+    // 保存当前图像的标注（如果有的话）
+    if (appState.currentImage && annotationTool) {
+      try {
+        const currentAnnotations = annotationTool.getAnnotationData();
+        if (currentAnnotations.keypoints.length > 0) {
+          await plantDataManager.saveImageAnnotations(
+            appState.currentImage.id,
+            currentAnnotations.keypoints
+          );
+          console.log('自动保存了当前图像的标注');
+        }
+      } catch (error) {
+        console.warn('自动保存当前标注失败:', error);
+      }
+    }
+    
+    // 更新应用状态
+    appState.currentImage = image;
+    
+    // 更新缩略图选中状态
+    updateImageThumbnailSelection(image.id);
+    
+    // 设置植物的选中图像（重要：这里恢复了原来的逻辑）
+    if (appState.currentPlant) {
+      plantDataManager.setSelectedImage(appState.currentPlant.id, image);
+    }
+    
+    // 加载图像到标注工具
+    if (annotationTool) {
+      // 强制刷新Canvas尺寸，确保正确计算
+      annotationTool.resizeCanvas();
+
+      // 判断是否是图片切换（而不是首次加载）
+      const isActualImageSwitch = annotationTool.imageLoaded && appState.currentImage;
+
+      // 获取锁定倍数设置和自动切换设置
+      const zoomSettings = getZoomLockSettings();
+      const autoMoveSettings = getAutoMoveSettings();
+
+      // 图片切换时始终保持视图状态，首次加载时重置
+      const shouldPreserveView = isImageSwitch;
+      console.log(`[调试] isImageSwitch: ${isImageSwitch}, shouldPreserveView: ${shouldPreserveView}`);
+      await annotationTool.loadImage(image, shouldPreserveView);
+
+      // 应用锁定倍数设置
+      if (isImageSwitch && zoomSettings.isLocked) {
+        // 图片切换且启用了锁定倍数
+        annotationTool.setZoom(zoomSettings.lockValue);
+        console.log(`图片切换：应用锁定倍数 ${zoomSettings.lockValue}x`);
+      } else if (isImageSwitch) {
+        console.log('图片切换：保持当前缩放和视图状态');
+      } else {
+        console.log('首次加载：重置视图到适合屏幕');
+      }
+      
+      // 加载已有的标注数据
+      try {
+        console.log(`[标注] 开始加载图像标注: ${image.id}`);
+        const existingAnnotations = await plantDataManager.getImageAnnotations(image.id);
+        if (existingAnnotations && existingAnnotations.length > 0) {
+          annotationTool.loadAnnotationData({ keypoints: existingAnnotations });
+          console.log(`[标注] 加载了 ${existingAnnotations.length} 个已有标注点`);
+
+          // 移动视角到最高标记点并保持当前缩放
+          setTimeout(() => {
+            annotationTool.moveToHighestKeypoint();
+          }, 100); // 稍微延迟确保渲染完成
+        } else {
+          // 如果没有已有标注，清空标注工具
+          annotationTool.clearKeypoints();
+          console.log(`[标注] 图像 ${image.id} 无标注数据`);
+        }
+      } catch (error) {
+        console.warn('[标注] 加载标注数据失败:', error);
+        annotationTool.clearKeypoints();
+      }
+    } else {
+      console.error('AnnotationTool未初始化');
+      showError('标注工具错误', '标注工具未正确初始化，请刷新页面重试');
+    }
+    
+    // 更新分支点预览
+    if (branchPointPreviewManager && appState.currentPlant) {
+      try {
+        const images = await plantDataManager.getPlantImages(
+          appState.currentPlant.id, 
+          appState.currentPlant.selectedViewAngle
+        );
+        const imageIndex = images.findIndex(img => img.id === image.id);
+        const currentKeypointCount = annotationTool ? annotationTool.keypoints.length : 0;
+        
+        await branchPointPreviewManager.updateContext(
+          appState.currentPlant.id,
+          appState.currentPlant.selectedViewAngle,
+          imageIndex,
+          currentKeypointCount
+        );
+      } catch (error) {
+        console.warn('更新分支点预览失败:', error);
+      }
+    }
+    
+    // 更新标注状态显示
+    await updateAnnotationStatusDisplay();
+
+    // 自动切换到预期位置（如果开启）
+    if (annotationTool) {
+      setTimeout(() => {
+        annotationTool.moveToExpectedPosition(isImageSwitch);
+      }, 100); // 稍微延迟确保渲染完成
+    }
+
+    console.log('图像选择完成');
+    
+  } catch (error) {
+    console.error('图像选择失败:', error);
+    showError('图像加载失败', error.message);
+  }
+}
+
+/**
+ * 更新缩略图选择状态并滚动到对应位置
+ */
+function updateImageThumbnailSelection(selectedImageId) {
+  // 清除所有选中状态
+  document.querySelectorAll('.image-thumbnail').forEach(thumb => {
+    thumb.classList.remove('selected');
+  });
+  
+  // 设置新的选中状态
+  const selectedThumb = document.querySelector(`[data-image-id="${selectedImageId}"]`);
+  if (selectedThumb) {
+    selectedThumb.classList.add('selected');
+    
+    // 滚动到选中的缩略图
+    scrollToThumbnail(selectedThumb);
+  }
+}
+
+/**
+ * 滚动到指定的缩略图，使其在视图垂直中央
+ */
+function scrollToThumbnail(thumbnailElement) {
+  const container = document.getElementById('thumbnail-container');
+  if (!container || !thumbnailElement) return;
+  
+  try {
+    // 获取容器和缩略图的尺寸信息
+    const containerRect = container.getBoundingClientRect();
+    const thumbnailRect = thumbnailElement.getBoundingClientRect();
+    
+    // 计算需要滚动的距离，使缩略图在容器垂直中央
+    const containerScrollTop = container.scrollTop;
+    const thumbnailOffsetTop = thumbnailElement.offsetTop;
+    const containerHeight = containerRect.height;
+    const thumbnailHeight = thumbnailRect.height;
+    
+    // 计算目标滚动位置：缩略图中心对齐到容器中心
+    const targetScrollTop = thumbnailOffsetTop - (containerHeight / 2) + (thumbnailHeight / 2);
+    
+    // 平滑滚动到目标位置
+    container.scrollTo({
+      top: targetScrollTop,
+      behavior: 'smooth'
+    });
+    
+    console.log(`滚动到缩略图: ${thumbnailElement.dataset.imageId}`);
+    
+  } catch (error) {
+    console.warn('滚动到缩略图失败:', error);
+  }
+}
+
+/**
+ * 更新标注状态显示
+ */
+async function updateAnnotationStatusDisplay() {
+  if (!appState.currentPlant || !appState.currentImage) {
+    hideAnnotationStatusDisplay();
+    return;
+  }
+
+  const statusSection = document.getElementById('annotation-status-section');
+  const currentImageIndex = document.getElementById('current-image-index');
+  const annotationSource = document.getElementById('annotation-source');
+  const timeSeriesStats = document.getElementById('time-series-stats');
+  const manualAdjustmentNotice = document.getElementById('manual-adjustment-notice');
+
+  if (!statusSection) return;
+
+  // 显示状态区域
+  statusSection.style.display = 'block';
+
+  try {
+    // 获取当前视角的所有图像
+    const images = await plantDataManager.getPlantImages(
+      appState.currentPlant.id, 
+      appState.currentPlant.selectedViewAngle
+    );
+    
+    const currentIndex = images.findIndex(img => img.id === appState.currentImage.id);
+    
+    // 更新当前图像索引
+    currentImageIndex.textContent = currentIndex >= 0 ? 
+      `${currentIndex + 1} / ${images.length}` : 
+      '- / -';
+
+    // 检查当前图像是否有标注
+    const savedAnnotations = await plantDataManager.getImageAnnotations(appState.currentImage.id);
+    const hasAnnotations = savedAnnotations && savedAnnotations.length > 0;
+
+    // 更新标注来源
+    if (hasAnnotations) {
+      annotationSource.textContent = 'Document';
+    } else {
+      annotationSource.textContent = 'No annotation';
+    }
+
+    // 计算视角统计
+    let annotatedCount = 0;
+    for (const image of images) {
+      const imageAnnotations = await plantDataManager.getImageAnnotations(image.id);
+      if (imageAnnotations && imageAnnotations.length > 0) {
+        annotatedCount++;
+      }
+    }
+    
+    const coverage = images.length > 0 ? Math.round((annotatedCount / images.length) * 100) : 0;
+    timeSeriesStats.textContent = `${annotatedCount}/${images.length} (${coverage}%)`;
+
+    // 隐藏微调模式通知（新方案不需要）
+    manualAdjustmentNotice.style.display = 'none';
+    
+  } catch (error) {
+    console.error('更新标注状态显示失败:', error);
+    hideAnnotationStatusDisplay();
+  }
+}
+
+/**
+ * 隐藏标注状态显示
+ */
+function hideAnnotationStatusDisplay() {
+  const statusSection = document.getElementById('annotation-status-section');
+  const manualAdjustmentNotice = document.getElementById('manual-adjustment-notice');
+
+  if (statusSection) statusSection.style.display = 'none';
+  if (manualAdjustmentNotice) manualAdjustmentNotice.style.display = 'none';
+}
+
+/**
+ * 处理保存标注 - 显示模态框
+ */
+async function handleSaveAnnotation() {
+  if (!annotationTool || !appState.currentPlant) {
+    showError('保存失败', '请先选择植物和图像');
+    return;
+  }
+  
+  const annotationData = annotationTool.getAnnotationData();
+  
+  if (annotationData.keypoints.length === 0) {
+    showError('保存失败', '请先添加标注点');
+    return;
+  }
+  
+  // 显示保存确认模态框
+  showSaveAnnotationModal();
+}
+
+/**
+ * 显示保存标注模态框
+ */
+function showSaveAnnotationModal() {
+  const modal = document.getElementById('save-annotation-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+  }
+}
+
+/**
+ * 隐藏保存标注模态框
+ */
+function hideSaveAnnotationModal() {
+  const modal = document.getElementById('save-annotation-modal');
+  if (modal) {
+    modal.style.display = 'none';
+  }
+}
+
+/**
+ * 执行实际的保存操作
+ */
+async function performSaveAnnotation(isManualAdjustment) {
+  if (!annotationTool || !appState.currentPlant) {
+    showError('保存失败', '请先选择植物和图像');
+    return;
+  }
+  
+  try {
+    const annotationData = annotationTool.getAnnotationData();
+    
+    if (annotationData.keypoints.length === 0) {
+      showError('保存失败', '请先添加标注点');
+      return;
+    }
+    
+    // 获取方向保存模式
+    const directionSaveMode = document.querySelector('input[name="direction-save-mode"]:checked');
+    const saveDirectionsOnly = directionSaveMode && directionSaveMode.value === 'directions-only';
+    
+    // 保存标注数据
+    const saveResult = await plantDataManager.savePlantAnnotations(
+      appState.currentPlant.id, 
+      annotationData.keypoints, 
+      isManualAdjustment,
+      { saveDirectionsOnly } // 传递方向保存选项
+    );
+    
+    updateProgressInfo(saveResult.message || `已保存 ${annotationData.keypoints.length} 个标注点`);
+    
+    // 更新状态显示
+    updateAnnotationStatusDisplay();
+    
+    // 更新统计显示
+    updateProgressStats();
+    
+    // 更新分支点预览（重新计算标注点数量）
+    if (branchPointPreviewManager && appState.currentPlant && appState.currentImage) {
+      const images = await plantDataManager.getPlantImages(
+        appState.currentPlant.id, 
+        appState.currentPlant.selectedViewAngle
+      );
+      const imageIndex = images.findIndex(img => img.id === appState.currentImage.id);
+      const currentAnnotations = await plantDataManager.getImageAnnotations(appState.currentImage.id);
+      const currentKeypointCount = currentAnnotations ? currentAnnotations.length : 0;
+      
+      await branchPointPreviewManager.updateContext(
+        appState.currentPlant.id,
+        appState.currentPlant.selectedViewAngle,
+        imageIndex,
+        currentKeypointCount
+      );
+    }
+    
+    console.log('标注数据已保存到持久化存储');
+    
+    // 隐藏模态框
+    hideSaveAnnotationModal();
+    
+  } catch (error) {
+    console.error('保存标注失败:', error);
+    showError('保存失败', `保存标注数据时出错: ${error.message}`);
+  }
+}
+
+/**
+ * 处理完成植物
+ */
+function handleCompletePlant() {
+  if (!appState.currentPlant) {
+    showError('操作失败', '请先选择植物');
+    return;
+  }
+  
+  try {
+    // 标记植物为已完成
+    plantDataManager.updatePlantStatus(appState.currentPlant.id, 'completed');
+    
+    // 更新统计显示
+    updateProgressStats();
+    
+    // 查找下一个未完成的植物
+    const nextPlant = plantDataManager.getNextPendingPlant(appState.currentPlant.id);
+    
+    if (nextPlant) {
+      // 自动跳转到下一个植物
+      handlePlantSelect(nextPlant);
+      updateProgressInfo(`已完成 ${appState.currentPlant.id}，跳转到 ${nextPlant.id}`);
+    } else {
+      updateProgressInfo('恭喜！所有植物都已完成标注');
+    }
+    
+  } catch (error) {
+    console.error('完成植物失败:', error);
+    showError('操作失败', error.message);
+  }
+}
+
+/**
+ * 处理导出数据
+ */
+async function handleExportData() {
+  if (!plantDataManager) {
+    showError('导出失败', '请先加载数据集');
+    return;
+  }
+  
+  try {
+    // 显示导出格式选择
+    await showExportOptionsModal();
+    
+  } catch (error) {
+    console.error('导出数据失败:', error);
+    showError('导出失败', error.message);
+  }
+}
+
+/**
+ * 显示导出选项模态框
+ */
+async function showExportOptionsModal() {
+  // Create modal HTML
+  const modalHTML = `
+    <div id="export-modal" class="modal" style="display: flex;">
+      <div class="modal-content" style="max-width: 600px; max-height: 90vh; overflow-y: auto;">
+        <h3>Export Annotation Data</h3>
+
+        <!-- Statistics Area -->
+        <div id="export-stats" style="background: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0; font-size: 14px;">
+          <div style="font-weight: 600; margin-bottom: 10px;">Data Statistics:</div>
+          <div id="stats-content">Loading...</div>
+        </div>
+
+        <!-- Preview Area -->
+        <div style="margin: 20px 0;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+            <h4 style="margin: 0;">Export Data Preview</h4>
+            <button id="refresh-preview-btn" class="btn btn-secondary" style="padding: 5px 15px; font-size: 14px;">Refresh Preview</button>
+          </div>
+          <div id="export-preview" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; max-height: 400px; overflow-y: auto;">
+            Generating preview...
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+          <button id="export-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button id="export-confirm-btn" class="btn btn-primary">Confirm Export</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 移除已存在的模态框
+  const existingModal = document.getElementById('export-modal');
+  if (existingModal) {
+    existingModal.remove();
+  }
+  
+  // 添加到body
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  
+  // 获取统计信息并显示
+  await updateExportStats();
+
+  // 生成导出预览
+  await generateExportPreview();
+
+  // 绑定事件
+  document.getElementById('export-cancel-btn').addEventListener('click', () => {
+    document.getElementById('export-modal').remove();
+  });
+
+  document.getElementById('export-confirm-btn').addEventListener('click', async () => {
+    document.getElementById('export-modal').remove();
+    await performExport();
+  });
+
+  document.getElementById('refresh-preview-btn').addEventListener('click', async () => {
+    await generateExportPreview();
+  });
+}
+
+/**
+ * 更新导出统计信息
+ */
+async function updateExportStats() {
+  const statsContent = document.getElementById('stats-content');
+  if (!statsContent) return;
+
+  try {
+    // 直接从文件系统获取标注数据统计
+    const exportData = await getDirectExportData();
+    const stats = calculateExportStats(exportData);
+
+    const html = `
+      <div>📊 Annotated Images: <strong>${stats.annotatedImages}</strong></div>
+      <div>🎯 Total Keypoints: <strong>${stats.totalKeypoints}</strong></div>
+      <div>📈 Average per Image: <strong>${stats.averageKeypointsPerImage}</strong> keypoints</div>
+      <div style="margin-top: 10px; color: #059669;">✅ Pure annotation data, ready for data analysis</div>
+      <div style="color: #059669;">✅ Includes all annotated images and skipped plant information</div>
+    `;
+
+    statsContent.innerHTML = html;
+  } catch (error) {
+    console.error('Failed to get export statistics:', error);
+    statsContent.innerHTML = '<div style="color: #dc2626;">Failed to load statistics, please check console</div>';
+  }
+}
+
+/**
+ * 执行导出
+ */
+async function performExport() {
+  try {
+    // 获取纯净的标注数据
+    const exportData = await getDirectExportData();
+    const stats = calculateExportStats(exportData);
+
+    if (stats.annotatedImages === 0) {
+      showError('Export Failed', 'No annotation data available for export');
+      return;
+    }
+
+    // 创建导出数据结构
+    const finalExportData = {
+      exportTime: new Date().toISOString(),
+      version: '3.0',
+      format: 'pure_annotations',
+      description: 'Pure annotation data, including image annotations and skipped plant information',
+      stats: {
+        annotatedImages: stats.annotatedImages,
+        totalKeypoints: stats.totalKeypoints,
+        averageKeypointsPerImage: stats.averageKeypointsPerImage,
+        skippedPlants: stats.skippedPlants
+      },
+      annotations: exportData.annotations,
+      skippedPlants: exportData.skippedPlants
+    };
+
+    // 下载文件
+    const blob = new Blob([JSON.stringify(finalExportData, null, 2)], {
+      type: 'application/json'
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `annotations_${new Date().toISOString().split('T')[0]}.json`;
+
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    URL.revokeObjectURL(url);
+
+    const message = `Exported annotation data for ${stats.annotatedImages} images with ${stats.totalKeypoints} keypoints`;
+    updateProgressInfo(message);
+    console.log('Annotation data exported', finalExportData);
+
+  } catch (error) {
+    console.error('Failed to export data:', error);
+    showError('Export Failed', error.message);
+  }
+}
+
+/**
+ * 直接从文件系统获取导出数据
+ */
+async function getDirectExportData() {
+  const exportData = {
+    annotations: {},
+    skippedPlants: {}
+  };
+
+  if (!plantDataManager || !plantDataManager.annotationStorage) {
+    throw new Error('数据管理器未初始化');
+  }
+
+  const annotationStorage = plantDataManager.annotationStorage;
+
+  // 获取所有标注文件
+  if (annotationStorage.useFileSystem && annotationStorage.fileSystemManager) {
+    const annotationsHandle = annotationStorage.fileSystemManager.getAnnotationsDirectory();
+    if (!annotationsHandle) {
+      throw new Error('无法访问标注目录');
+    }
+
+    // 扫描所有文件
+    for await (const [name, handle] of annotationsHandle.entries()) {
+      if (handle.kind === 'file' && name.endsWith('.json')) {
+        try {
+          const file = await handle.getFile();
+          const content = await file.text();
+          const data = JSON.parse(content);
+
+          if (name.endsWith('_skip_info.json')) {
+            // 跳过信息文件
+            const plantId = name.replace('_skip_info.json', '');
+            exportData.skippedPlants[plantId] = {
+              plantId: data.plantId,
+              skipReason: data.skipReason,
+              skipDate: data.skipDate,
+              status: data.status
+            };
+          } else {
+            // 标注文件
+            const imageId = name.replace('.json', '');
+            if (data.annotations && data.annotations.length > 0) {
+              // 如果没有plantId，尝试从imageId推断
+              const plantId = data.plantId || inferPlantIdFromImageId(imageId);
+
+              exportData.annotations[imageId] = {
+                imageId: data.imageId || imageId,
+                plantId: plantId,
+                annotations: data.annotations,
+                timestamp: data.timestamp,
+                version: data.version
+              };
+            }
+          }
+        } catch (error) {
+          console.warn(`读取文件失败 (${name}):`, error);
+        }
+      }
+    }
+  } else {
+    // 从内存中获取数据（兼容模式）
+    for (const [plantId, annotationData] of annotationStorage.annotations) {
+      if (annotationData.status === 'skipped') {
+        exportData.skippedPlants[plantId] = {
+          plantId,
+          skipReason: annotationData.skipReason,
+          skipDate: annotationData.skipDate,
+          status: annotationData.status
+        };
+      }
+    }
+
+    // 获取图像标注数据
+    for (const [imageId, annotationData] of annotationStorage.imageAnnotations) {
+      if (annotationData.annotations && annotationData.annotations.length > 0) {
+        exportData.annotations[imageId] = {
+          imageId,
+          plantId: annotationData.plantId,
+          annotations: annotationData.annotations,
+          timestamp: annotationData.timestamp,
+          version: annotationData.version
+        };
+      }
+    }
+  }
+
+  return exportData;
+}
+
+/**
+ * 计算导出数据统计
+ */
+function calculateExportStats(exportData) {
+  const annotatedImages = Object.keys(exportData.annotations).length;
+  const skippedPlants = Object.keys(exportData.skippedPlants).length;
+
+  let totalKeypoints = 0;
+  for (const imageData of Object.values(exportData.annotations)) {
+    totalKeypoints += imageData.annotations.length;
+  }
+
+  const averageKeypointsPerImage = annotatedImages > 0 ?
+    (totalKeypoints / annotatedImages).toFixed(1) : '0';
+
+  return {
+    annotatedImages,
+    totalKeypoints,
+    averageKeypointsPerImage,
+    skippedPlants
+  };
+}
+
+/**
+ * 处理植物更新事件
+ */
+function handlePlantUpdated(event) {
+  const { plant } = event.detail;
+  
+  // 更新列表中的植物项
+  const plantItem = document.querySelector(`[data-plant-id="${plant.id}"]`);
+  if (plantItem) {
+    // 更新状态图标
+    const statusElement = plantItem.querySelector('.plant-status');
+    if (statusElement) {
+      statusElement.textContent = getStatusIcon(plant.status);
+    }
+    
+    // 更新状态文本
+    const statusTextElement = plantItem.querySelector('.status-text');
+    if (statusTextElement) {
+      statusTextElement.textContent = getStatusText(plant.status);
+    }
+    
+    // 更新图像数量
+    const imageCountElement = plantItem.querySelector('.image-count');
+    if (imageCountElement && plant.imageCount > 0) {
+      imageCountElement.textContent = `${plant.imageCount} 张图像`;
+    }
+    
+    // 更新视角信息
+    const viewAnglesElement = plantItem.querySelector('.view-angles');
+    if (viewAnglesElement) {
+      const viewAnglesText = plant.viewAngles.length > 0 ? 
+        `视角: ${plant.viewAngles.join(', ')}` :
+        '视角: 检测中...';
+      viewAnglesElement.textContent = viewAnglesText;
+    }
+    
+    // 更新选中视角信息
+    const plantViewInfo = plantItem.querySelector('.plant-view-info');
+    if (plantViewInfo) {
+      let selectedViewElement = plantViewInfo.querySelector('.selected-view');
+      if (plant.selectedViewAngle) {
+        if (!selectedViewElement) {
+          selectedViewElement = document.createElement('div');
+          selectedViewElement.className = 'selected-view';
+          plantViewInfo.appendChild(selectedViewElement);
+        }
+        selectedViewElement.textContent = `Choosed: ${plant.selectedViewAngle}`;
+      } else if (selectedViewElement) {
+        selectedViewElement.remove();
+      }
+    }
+  }
+  
+  // 更新统计显示
+  updateProgressStats();
+  
+  // 更新旧的进度信息
+  const progress = plantDataManager.getProgress();
+  updateProgressInfo(`Progress: ${progress.completed}/${progress.total} (${progress.completionRate}%)`);
+}
+
+/**
+ * 键盘快捷键处理
+ */
+function handleKeyboardShortcuts(event) {
+  // 全局快捷键
+  if (event.ctrlKey || event.metaKey) {
+    switch (event.key) {
+      case 'o':
+        event.preventDefault();
+        handleSelectDataset();
+        break;
+      case 's':
+        event.preventDefault();
+        handleSaveAnnotation();
+        break;
+    }
+  }
+  
+  // 应用快捷键（仅在主应用显示时）
+  if (mainApp && mainApp.style.display !== 'none') {
+    switch (event.key) {
+      case 'Enter':
+        event.preventDefault();
+        handleCompletePlant();
+        break;
+      case 'ArrowLeft':
+        event.preventDefault();
+        navigateToPreviousImage();
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        navigateToNextImage();
+        break;
+    }
+  }
+}
+
+/**
+ * 模拟加载过程
+ */
+async function simulateLoading() {
+  const loadingTexts = [
+    '正在初始化标注工具...',
+    '检查浏览器兼容性...',
+    '加载组件模块...',
+    '准备用户界面...'
+  ];
+  
+  const loadingP = loadingScreen.querySelector('p');
+  
+  for (const text of loadingTexts) {
+    loadingP.textContent = text;
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+}
+
+/**
+ * 显示主应用界面
+ */
+function showMainApp() {
+  loadingScreen.style.display = 'none';
+  mainApp.style.display = 'flex';
+  
+  // 确保界面完全渲染后再检查和初始化AnnotationTool
+  setTimeout(() => {
+    if (!annotationTool) {
+      try {
+        console.log('[调试] 在showMainApp中延迟初始化AnnotationTool');
+        annotationTool = new AnnotationTool('annotation-canvas');
+        window.PlantAnnotationTool.annotationTool = annotationTool;
+        console.log('AnnotationTool延迟初始化完成');
+      } catch (error) {
+        console.error('延迟初始化AnnotationTool失败:', error);
+      }
+    } else {
+      console.log('[调试] AnnotationTool已存在，跳过延迟初始化，调整Canvas尺寸');
+      // 如果已经初始化，强制重新调整Canvas尺寸
+      annotationTool.resizeCanvas();
+    }
+    
+    // 确保分支点预览管理器已初始化
+    if (!branchPointPreviewManager) {
+      try {
+        branchPointPreviewManager = new BranchPointPreviewManager();
+        branchPointPreviewManager.setPlantDataManager(plantDataManager);
+        window.PlantAnnotationTool.branchPointPreviewManager = branchPointPreviewManager;
+        console.log('BranchPointPreviewManager延迟初始化完成');
+      } catch (error) {
+        console.error('延迟初始化BranchPointPreviewManager失败:', error);
+      }
+    }
+  }, 300);
+}
+
+/**
+ * 更新进度信息
+ */
+function updateProgressInfo(text) {
+  const progressText = document.getElementById('progress-text');
+  if (progressText) {
+    progressText.textContent = text;
+  }
+}
+
+/**
+ * 显示错误信息
+ */
+function showError(title, message) {
+  const errorMessage = document.getElementById('error-message');
+  if (errorMessage && errorModal) {
+    errorMessage.textContent = message;
+    errorModal.style.display = 'flex';
+  }
+  console.error(`${title}: ${message}`);
+}
+
+/**
+ * 隐藏错误信息
+ */
+function hideError() {
+  if (errorModal) {
+    errorModal.style.display = 'none';
+  }
+}
+
+/**
+ * 显示成功信息
+ */
+function showSuccess(title, message) {
+  // 使用updateProgressInfo显示成功消息
+  updateProgressInfo(`✅ ${title}: ${message}`);
+  console.log(`${title}: ${message}`);
+}
+
+/**
+ * 应用入口点
+ */
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM加载完成，开始初始化应用...');
+  initializeApp();
+});
+
+// 开发环境调试
+if (import.meta.env?.DEV) {
+  window.DEBUG_APP_STATE = appState;
+  window.DEBUG_PLANT_MANAGER = () => window.PlantAnnotationTool?.plantDataManager;
+  window.DEBUG_ANNOTATION_TOOL = () => window.PlantAnnotationTool?.annotationTool;
+  
+  // 添加时间序列导出调试功能
+  window.DEBUG_TIME_SERIES_EXPORT = async () => {
+    const plantManager = window.PlantAnnotationTool?.plantDataManager;
+    if (plantManager) {
+      return await plantManager.debugTimeSeriesExport();
+    } else {
+      console.error('PlantDataManager未初始化');
+      return null;
+    }
+  };
+  
+  // 添加立即导出纯净数据的调试功能
+  window.DEBUG_EXPORT_PURE = async () => {
+    const plantManager = window.PlantAnnotationTool?.plantDataManager;
+    if (plantManager) {
+      const pureData = await plantManager.exportPureImageAnnotations();
+      console.log('调试：纯净导出数据', pureData);
+      return pureData;
+    } else {
+      console.error('PlantDataManager未初始化');
+      return null;
+    }
+  };
+  
+  // 临时修复脚本：为传统标注数据添加序号字段
+  window.fixLegacyDataOrder = async function() {
+    console.log('=== 开始修复传统数据的序号字段 ===');
+    
+    try {
+      // 获取植物数据管理器和存储管理器
+      const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+      if (!plantDataManager) {
+        throw new Error('植物数据管理器未初始化，请先加载数据集');
+      }
+      
+      const annotationStorage = plantDataManager.annotationStorage;
+      if (!annotationStorage) {
+        throw new Error('标注存储管理器未找到');
+      }
+      
+      console.log('正在扫描图像标注数据...');
+      
+      let processedImages = 0;
+      let fixedAnnotations = 0;
+      let totalAnnotations = 0;
+      
+      // 处理imageAnnotations中的数据
+      for (const [imageId, annotationData] of annotationStorage.imageAnnotations) {
+        if (annotationData.annotations && annotationData.annotations.length > 0) {
+          processedImages++;
+          
+          let hasOrderIssues = false;
+          const annotations = annotationData.annotations;
+          totalAnnotations += annotations.length;
+          
+          // 检查是否有标注点没有序号
+          for (let i = 0; i < annotations.length; i++) {
+            if (typeof annotations[i].order !== 'number' || annotations[i].order <= 0) {
+              hasOrderIssues = true;
+              break;
+            }
+          }
+          
+          // 检查序号是否重复或不连续
+          if (!hasOrderIssues) {
+            const orders = annotations.map(kp => kp.order).sort((a, b) => a - b);
+            for (let i = 0; i < orders.length; i++) {
+              if (orders[i] !== i + 1) {
+                hasOrderIssues = true;
+                break;
+              }
+            }
+          }
+          
+          // 如果有问题，修复序号
+          if (hasOrderIssues) {
+            console.log(`修复图像 ${imageId} 的 ${annotations.length} 个标注点的序号...`);
+            
+            // 按照原有顺序分配序号（保持传统数据的顺序不变）
+            for (let i = 0; i < annotations.length; i++) {
+              annotations[i].order = i + 1;
+            }
+            
+            fixedAnnotations += annotations.length;
+            
+            // 重新保存到存储
+            await annotationStorage.saveImageAnnotation(imageId, annotationData);
+            
+            console.log(`✓ 已修复图像 ${imageId}：分配序号 1-${annotations.length}`);
+          }
+        }
+      }
+      
+      // 处理植物标注数据中的annotations字段
+      console.log('正在扫描植物标注数据...');
+      
+      let processedPlants = 0;
+      let fixedPlantAnnotations = 0;
+      
+      for (const [plantId, plantData] of annotationStorage.annotations) {
+        if (plantData.annotations && plantData.annotations.length > 0) {
+          processedPlants++;
+          
+          let hasOrderIssues = false;
+          const annotations = plantData.annotations;
+          
+          // 检查是否有标注点没有序号
+          for (let i = 0; i < annotations.length; i++) {
+            if (typeof annotations[i].order !== 'number' || annotations[i].order <= 0) {
+              hasOrderIssues = true;
+              break;
+            }
+          }
+          
+          // 检查序号是否重复或不连续
+          if (!hasOrderIssues) {
+            const orders = annotations.map(kp => kp.order).sort((a, b) => a - b);
+            for (let i = 0; i < orders.length; i++) {
+              if (orders[i] !== i + 1) {
+                hasOrderIssues = true;
+                break;
+              }
+            }
+          }
+          
+          // 如果有问题，修复序号
+          if (hasOrderIssues) {
+            console.log(`修复植物 ${plantId} 的 ${annotations.length} 个标注点的序号...`);
+            
+            // 按照原有顺序分配序号
+            for (let i = 0; i < annotations.length; i++) {
+              annotations[i].order = i + 1;
+            }
+            
+            fixedPlantAnnotations += annotations.length;
+            
+            console.log(`✓ 已修复植物 ${plantId}：分配序号 1-${annotations.length}`);
+          }
+        }
+      }
+      
+      // 保存所有修改到服务器
+      if (fixedAnnotations > 0 || fixedPlantAnnotations > 0) {
+        console.log('正在保存修复的数据到服务器...');
+        await annotationStorage.saveAnnotationsToServer();
+        console.log('✓ 所有修复的数据已保存');
+      }
+      
+      // 输出修复结果
+      console.log('=== 修复完成 ===');
+      console.log(`扫描了 ${processedImages} 张图像的标注数据`);
+      console.log(`扫描了 ${processedPlants} 个植物的标注数据`);
+      console.log(`总计 ${totalAnnotations} 个标注点`);
+      console.log(`修复了 ${fixedAnnotations} 个图像标注点的序号`);
+      console.log(`修复了 ${fixedPlantAnnotations} 个植物标注点的序号`);
+      
+      if (fixedAnnotations === 0 && fixedPlantAnnotations === 0) {
+        console.log('✅ 所有数据的序号都是正确的，无需修复');
+      } else {
+        console.log(`✅ 已成功修复 ${fixedAnnotations + fixedPlantAnnotations} 个标注点的序号`);
+      }
+      
+      // 建议用户重新加载页面以确保数据生效
+      if (fixedAnnotations > 0 || fixedPlantAnnotations > 0) {
+        console.log('💡 建议重新加载页面以确保修复的数据完全生效');
+      }
+      
+      return {
+        success: true,
+        processedImages,
+        processedPlants,
+        totalAnnotations,
+        fixedAnnotations,
+        fixedPlantAnnotations,
+        totalFixed: fixedAnnotations + fixedPlantAnnotations
+      };
+      
+    } catch (error) {
+      console.error('修复传统数据失败:', error);
+      console.log('❌ 修复过程中发生错误，请检查控制台输出');
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  };
+  
+  // 调试标注文件读取
+  window.DEBUG_ANNOTATION_FILE = async (imageId) => {
+    if (plantDataManager && plantDataManager.fileSystemManager) {
+      try {
+        console.log(`[调试] 尝试读取标注文件: ${imageId}`);
+        const data = await plantDataManager.fileSystemManager.loadAnnotationFile(imageId);
+        console.log(`[调试] 标注文件内容:`, data);
+        return data;
+      } catch (error) {
+        console.error(`[调试] 读取失败:`, error);
+        return null;
+      }
+    }
+    return null;
+  };
+
+  // 调试：查找有标注数据的文件
+  window.DEBUG_FIND_ANNOTATED_FILES = async (maxCheck = 10) => {
+    if (plantDataManager && plantDataManager.fileSystemManager) {
+      try {
+        const allFiles = await plantDataManager.fileSystemManager.getAllAnnotationFiles();
+        console.log(`[调试] 总共 ${allFiles.length} 个标注文件，检查前 ${maxCheck} 个...`);
+
+        const annotatedFiles = [];
+        for (let i = 0; i < Math.min(maxCheck, allFiles.length); i++) {
+          const imageId = allFiles[i];
+          const data = await plantDataManager.fileSystemManager.loadAnnotationFile(imageId);
+          if (data && data.annotations && data.annotations.length > 0) {
+            annotatedFiles.push({
+              imageId,
+              annotationCount: data.annotations.length,
+              data
+            });
+            console.log(`[调试] 找到有标注的文件: ${imageId} (${data.annotations.length} 个标注点)`);
+          }
+        }
+
+        console.log(`[调试] 检查完成，找到 ${annotatedFiles.length} 个有标注数据的文件`);
+        return annotatedFiles;
+      } catch (error) {
+        console.error(`[调试] 查找失败:`, error);
+        return [];
+      }
+    }
+    return [];
+  };
+
+  console.log('开发模式：调试对象已绑定到window');
+  console.log('可用调试方法:');
+  console.log('- DEBUG_TIME_SERIES_EXPORT() - 检查时间序列导出状态');
+  console.log('- DEBUG_EXPORT_PURE() - 检查纯净导出数据');
+  console.log('- DEBUG_ANNOTATION_FILE(imageId) - 调试标注文件读取');
+  console.log('- DEBUG_FIND_ANNOTATED_FILES(maxCheck) - 查找有标注数据的文件');
+  console.log('- fixLegacyDataOrder() - 修复传统数据的序号字段');
+}
+
+/**
+ * 生成导出数据预览
+ */
+async function generateExportPreview() {
+  const previewContainer = document.getElementById('export-preview');
+  if (!previewContainer) return;
+
+  try {
+    previewContainer.innerHTML = '正在生成预览...';
+
+    // 获取导出数据
+    const exportData = await getDirectExportData();
+
+    if (Object.keys(exportData.annotations).length === 0 && Object.keys(exportData.skippedPlants).length === 0) {
+      previewContainer.innerHTML = '<div style="color: #6b7280; text-align: center; padding: 20px;">No annotation data available</div>';
+      return;
+    }
+
+    // 生成预览HTML
+    const previewHTML = generateSimplePreviewHTML(exportData);
+    previewContainer.innerHTML = previewHTML;
+
+    // 绑定展开/折叠事件
+    bindPreviewEvents();
+
+  } catch (error) {
+    console.error('Failed to generate export preview:', error);
+    previewContainer.innerHTML = '<div style="color: #dc2626;">Failed to generate preview, please check console</div>';
+  }
+}
+
+/**
+ * 从图像ID推断植株ID
+ */
+function inferPlantIdFromImageId(imageId) {
+  // 图像ID格式通常是: BR017-028122_sv-000_BR017-028122-2018-07-04_00_VIS_sv_000-0-0-0.png
+  // 植株ID通常是: BR017-028122
+
+  if (imageId.includes('_')) {
+    const parts = imageId.split('_');
+    if (parts.length > 0) {
+      // 取第一部分作为植株ID
+      return parts[0];
+    }
+  }
+
+  // 如果无法解析，尝试从文件名中提取
+  if (imageId.includes('-')) {
+    const parts = imageId.split('-');
+    if (parts.length >= 2) {
+      // 组合前两部分作为植株ID (如 BR017-028122)
+      return `${parts[0]}-${parts[1]}`;
+    }
+  }
+
+  // 最后的备选方案：返回原始imageId的前缀
+  return imageId.split('.')[0].split('_')[0];
+}
+
+/**
+ * 生成简化的预览HTML
+ */
+function generateSimplePreviewHTML(exportData) {
+  let html = '';
+
+  // Display annotation data
+  const annotationCount = Object.keys(exportData.annotations).length;
+  if (annotationCount > 0) {
+    html += `
+      <div style="margin-bottom: 20px;">
+        <div style="font-weight: 600; margin-bottom: 10px; color: #374151;">
+          📊 Annotation Data (${annotationCount} images)
+        </div>
+        <div style="max-height: 200px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 4px; padding: 10px;">
+    `;
+
+    // 显示前10个标注数据作为预览
+    const imageIds = Object.keys(exportData.annotations).slice(0, 10);
+    for (const imageId of imageIds) {
+      const data = exportData.annotations[imageId];
+      // 如果没有plantId，尝试从imageId推断
+      const plantId = data.plantId || inferPlantIdFromImageId(imageId);
+
+      html += `
+        <div style="margin-bottom: 8px; padding: 8px; background: #f9fafb; border-radius: 4px; font-size: 13px;">
+          <div style="font-weight: 500;">${imageId}</div>
+          <div style="color: #6b7280;">
+            Plant: ${plantId} |
+            Keypoints: ${data.annotations.length} |
+            Time: ${data.timestamp ? new Date(data.timestamp).toLocaleString() : 'N/A'}
+          </div>
+        </div>
+      `;
+    }
+
+    if (annotationCount > 10) {
+      html += `<div style="text-align: center; color: #6b7280; margin-top: 10px;">... ${annotationCount - 10} more images</div>`;
+    }
+
+    html += '</div></div>';
+  }
+
+  // Display skipped plants
+  const skippedCount = Object.keys(exportData.skippedPlants).length;
+  if (skippedCount > 0) {
+    html += `
+      <div style="margin-bottom: 20px;">
+        <div style="font-weight: 600; margin-bottom: 10px; color: #374151;">
+          ⏭️ Skipped Plants (${skippedCount})
+        </div>
+        <div style="max-height: 150px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 4px; padding: 10px;">
+    `;
+
+    for (const [plantId, data] of Object.entries(exportData.skippedPlants)) {
+      html += `
+        <div style="margin-bottom: 8px; padding: 8px; background: #fef3c7; border-radius: 4px; font-size: 13px;">
+          <div style="font-weight: 500;">${plantId}</div>
+          <div style="color: #92400e;">
+            Reason: ${data.skipReason} |
+            Time: ${data.skipDate ? new Date(data.skipDate).toLocaleString() : 'N/A'}
+          </div>
+        </div>
+      `;
+    }
+
+    html += '</div></div>';
+  }
+
+  if (html === '') {
+    html = '<div style="color: #6b7280; text-align: center; padding: 20px;">No data available</div>';
+  }
+
+  return html;
+}
+
+/**
+ * 按植株和视角分组图像数据
+ */
+function groupImagesByPlantAndView(imageData) {
+  const groupedData = {};
+  
+  for (const [imageId, annotations] of Object.entries(imageData)) {
+    // 解析图像ID获取植株和视角信息
+    const parts = imageId.split('_');
+    if (parts.length >= 2) {
+      const plantId = parts[0]; // BR017-028111
+      const viewAngle = parts[1]; // sv-000
+      
+      if (!groupedData[plantId]) {
+        groupedData[plantId] = {};
+      }
+      
+      if (!groupedData[plantId][viewAngle]) {
+        groupedData[plantId][viewAngle] = [];
+      }
+      
+      groupedData[plantId][viewAngle].push({
+        imageId,
+        annotations,
+        imageName: imageId,
+        keypointCount: annotations.length
+      });
+    }
+  }
+  
+  // 按时间排序每个视角的图像
+  for (const plantId of Object.keys(groupedData)) {
+    for (const viewAngle of Object.keys(groupedData[plantId])) {
+      groupedData[plantId][viewAngle].sort((a, b) => {
+        return a.imageId.localeCompare(b.imageId);
+      });
+    }
+  }
+  
+  return groupedData;
+}
+
+/**
+ * 生成预览HTML
+ */
+async function generatePreviewHTML(groupedData) {
+  const plantIds = Object.keys(groupedData).sort();
+  
+  if (plantIds.length === 0) {
+    return '<div style="color: #6b7280; text-align: center; padding: 20px;">暂无数据</div>';
+  }
+  
+  let html = `
+    <div style="margin-bottom: 15px; font-weight: 600; color: #374151;">
+      共 ${plantIds.length} 个植株参与导出
+    </div>
+  `;
+  
+  for (const plantId of plantIds) {
+    const plantData = groupedData[plantId];
+    const viewAngles = Object.keys(plantData);
+    const totalImages = Object.values(plantData).reduce((sum, images) => sum + images.length, 0);
+    const totalKeypoints = Object.values(plantData).reduce((sum, images) => 
+      sum + images.reduce((imgSum, img) => imgSum + img.keypointCount, 0), 0
+    );
+    
+    html += `
+      <div class="preview-plant" style="border: 1px solid #d1d5db; border-radius: 8px; margin-bottom: 15px; overflow: hidden;">
+        <div class="preview-plant-header" style="background: #f3f4f6; padding: 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center;"
+             onclick="togglePlantPreview('${plantId}')">
+          <div>
+            <span style="font-weight: 600; color: #1f2937;">🌱 ${plantId}</span>
+            <span style="color: #6b7280; margin-left: 10px;">
+              ${viewAngles.length} 个视角 • ${totalImages} 张图像 • ${totalKeypoints} 个标注点
+            </span>
+          </div>
+          <span class="preview-toggle" style="color: #6b7280;">▼</span>
+        </div>
+        <div class="preview-plant-content" id="preview-${plantId}" style="display: none;">
+          ${generateViewAnglesHTML(plantId, plantData)}
+        </div>
+      </div>
+    `;
+  }
+  
+  return html;
+}
+
+/**
+ * 生成视角HTML
+ */
+function generateViewAnglesHTML(plantId, plantData) {
+  let html = '';
+  
+  for (const [viewAngle, images] of Object.entries(plantData)) {
+    const totalKeypoints = images.reduce((sum, img) => sum + img.keypointCount, 0);
+    
+    html += `
+      <div class="preview-view-angle" style="border-top: 1px solid #e5e7eb;">
+        <div class="preview-view-header" style="background: #fafafa; padding: 10px 15px; cursor: pointer; display: flex; justify-content: space-between; align-items: center;"
+             onclick="toggleViewPreview('${plantId}', '${viewAngle}')">
+          <div>
+            <span style="font-weight: 500; color: #374151;">📷 ${viewAngle}</span>
+            <span style="color: #6b7280; margin-left: 10px;">
+              ${images.length} 张图像 • ${totalKeypoints} 个标注点
+            </span>
+          </div>
+          <span class="preview-toggle" style="color: #6b7280;">▶</span>
+        </div>
+        <div class="preview-view-content" id="preview-${plantId}-${viewAngle}" style="display: none; padding: 10px 15px;">
+          ${generateImagesHTML(images)}
+        </div>
+      </div>
+    `;
+  }
+  
+  return html;
+}
+
+/**
+ * 生成图像HTML
+ */
+function generateImagesHTML(images) {
+  let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 15px;">';
+  
+  for (const image of images) {
+    // 正确提取文件名 - 从完整的imageId中提取最后的文件名部分
+    const fileName = extractDisplayFileName(image.imageName);
+    
+    html += `
+      <div class="preview-image" style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <div style="margin-bottom: 10px;">
+          <div style="font-weight: 500; color: #374151; font-size: 14px; word-break: break-all;" title="${image.imageName}">
+            📄 ${fileName}
+          </div>
+          <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">
+            ${image.keypointCount} 个标注点
+          </div>
+        </div>
+        
+        <div class="preview-annotations" style="background: #f8fafc; border-radius: 6px; padding: 10px;">
+          <div style="font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 8px;">标注点预览:</div>
+          <div class="annotation-preview-container" style="position: relative; width: 100%; height: 200px; border: 1px solid #d1d5db; border-radius: 4px; overflow: hidden; background: #f9fafb;">
+            <canvas 
+              class="annotation-preview-canvas" 
+              data-image-id="${image.imageId}"
+              data-annotations='${JSON.stringify(image.annotations)}'
+              style="width: 100%; height: 100%; cursor: pointer;"
+              title="点击查看大图"
+              onclick="showImageDetail('${image.imageId}')"
+            ></canvas>
+            <div class="preview-loading" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #6b7280; font-size: 12px;">
+              加载中...
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  
+  html += '</div>';
+  return html;
+}
+
+/**
+ * 正确提取显示用的文件名
+ */
+function extractDisplayFileName(imageName) {
+  // 从imageId中提取有意义的部分
+  // 例如: BR017-028111_sv-000_BR017-028111-2018-07-09_00_VIS_sv_000-0-0-0.png
+  // 提取: BR017-028111-2018-07-09_00_VIS_sv_000-0-0-0.png
+  
+  const parts = imageName.split('_');
+  if (parts.length >= 3) {
+    // 从第三部分开始是有意义的文件名信息
+    return parts.slice(2).join('_');
+  }
+  
+  // 如果格式不符合预期，返回原始名称
+  return imageName;
+}
+
+/**
+ * 绑定预览事件
+ */
+function bindPreviewEvents() {
+  // 植株展开/折叠事件通过onclick属性绑定
+  window.togglePlantPreview = function(plantId) {
+    const content = document.getElementById(`preview-${plantId}`);
+    const toggle = content.parentElement.querySelector('.preview-plant-header .preview-toggle');
+    
+    if (content.style.display === 'none') {
+      content.style.display = 'block';
+      toggle.textContent = '▲';
+      // 展开时渲染canvas
+      setTimeout(() => renderPreviewCanvases(content), 100);
+    } else {
+      content.style.display = 'none';
+      toggle.textContent = '▼';
+    }
+  };
+  
+  // 视角展开/折叠事件
+  window.toggleViewPreview = function(plantId, viewAngle) {
+    const content = document.getElementById(`preview-${plantId}-${viewAngle}`);
+    const toggle = content.parentElement.querySelector('.preview-view-header .preview-toggle');
+    
+    if (content.style.display === 'none') {
+      content.style.display = 'block';
+      toggle.textContent = '▼';
+      // 展开时渲染canvas
+      setTimeout(() => renderPreviewCanvases(content), 100);
+    } else {
+      content.style.display = 'none';
+      toggle.textContent = '▶';
+    }
+  };
+  
+  // 显示图像详情
+  window.showImageDetail = function(imageId) {
+    showImageDetailModal(imageId);
+  };
+  
+  // 渲染所有可见的canvas
+  setTimeout(() => {
+    const allCanvases = document.querySelectorAll('.annotation-preview-canvas');
+    allCanvases.forEach(canvas => {
+      if (isElementVisible(canvas)) {
+        renderAnnotationPreview(canvas);
+      }
+    });
+  }, 500);
+}
+
+/**
+ * 渲染预览区域内的所有canvas
+ */
+function renderPreviewCanvases(container) {
+  const canvases = container.querySelectorAll('.annotation-preview-canvas');
+  canvases.forEach(canvas => {
+    if (isElementVisible(canvas)) {
+      renderAnnotationPreview(canvas);
+    }
+  });
+}
+
+/**
+ * 检查元素是否可见
+ */
+function isElementVisible(element) {
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+/**
+ * 渲染单个标注预览canvas
+ */
+async function renderAnnotationPreview(canvas) {
+  try {
+    const imageId = canvas.dataset.imageId;
+    const annotations = JSON.parse(canvas.dataset.annotations);
+    const loadingElement = canvas.parentElement.querySelector('.preview-loading');
+    
+    // 检查是否已经渲染过
+    if (canvas.dataset.rendered === 'true') {
+      return;
+    }
+    
+    // 显示加载状态
+    if (loadingElement) {
+      loadingElement.style.display = 'block';
+      loadingElement.textContent = '加载图像...';
+    }
+    
+    // 获取图像数据
+    const imageData = await getImageDataFromId(imageId);
+    if (!imageData) {
+      throw new Error('无法获取图像数据');
+    }
+    
+    // 加载图像
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    
+    await new Promise((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('图像加载失败'));
+      image.src = imageData.url;
+    });
+    
+    // 设置canvas尺寸
+    const container = canvas.parentElement;
+    const containerRect = container.getBoundingClientRect();
+    const targetWidth = containerRect.width - 2; // 减去边框
+    const targetHeight = containerRect.height - 2;
+    
+    canvas.width = targetWidth * window.devicePixelRatio;
+    canvas.height = targetHeight * window.devicePixelRatio;
+    canvas.style.width = targetWidth + 'px';
+    canvas.style.height = targetHeight + 'px';
+    
+    const ctx = canvas.getContext('2d');
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    
+    // 计算图像适应容器的尺寸
+    const imgAspect = image.width / image.height;
+    const containerAspect = targetWidth / targetHeight;
+    
+    let drawWidth, drawHeight, offsetX, offsetY;
+    
+    if (imgAspect > containerAspect) {
+      // 图像较宽，以宽度为准
+      drawWidth = targetWidth;
+      drawHeight = targetWidth / imgAspect;
+      offsetX = 0;
+      offsetY = (targetHeight - drawHeight) / 2;
+    } else {
+      // 图像较高，以高度为准
+      drawHeight = targetHeight;
+      drawWidth = targetHeight * imgAspect;
+      offsetX = (targetWidth - drawWidth) / 2;
+      offsetY = 0;
+    }
+    
+    // 绘制图像
+    ctx.clearRect(0, 0, targetWidth, targetHeight);
+    ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+    
+    // 绘制标注点
+    if (annotations && annotations.length > 0) {
+      // 计算标注点在canvas中的位置
+      const scaleX = drawWidth / image.width;
+      const scaleY = drawHeight / image.height;
+      
+      annotations.forEach((annotation, index) => {
+        const x = annotation.x * scaleX + offsetX;
+        const y = annotation.y * scaleY + offsetY;
+        
+        // 绘制标注点
+        ctx.fillStyle = '#ef4444';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+        
+        // 绘制标注点编号
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 10px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText((index + 1).toString(), x, y);
+      });
+    }
+    
+    // 隐藏加载状态
+    if (loadingElement) {
+      loadingElement.style.display = 'none';
+    }
+    
+    // 标记为已渲染
+    canvas.dataset.rendered = 'true';
+    
+  } catch (error) {
+    console.error('渲染标注预览失败:', error);
+    const loadingElement = canvas.parentElement.querySelector('.preview-loading');
+    if (loadingElement) {
+      loadingElement.textContent = '加载失败';
+      loadingElement.style.color = '#dc2626';
+    }
+  }
+}
+
+/**
+ * 从图像ID获取图像数据
+ */
+async function getImageDataFromId(imageId) {
+  try {
+    // 从imageId中解析植株ID
+    const parts = imageId.split('_');
+    if (parts.length < 2) {
+      throw new Error('无效的图像ID格式');
+    }
+    
+    const plantId = parts[0];
+    const viewAngle = parts[1];
+    
+    // 获取植株的图像数据
+    if (!plantDataManager) {
+      throw new Error('PlantDataManager未初始化');
+    }
+    
+    const images = await plantDataManager.getPlantImages(plantId, viewAngle);
+    const targetImage = images.find(img => img.id === imageId);
+    
+    if (!targetImage) {
+      throw new Error(`未找到图像: ${imageId}`);
+    }
+    
+    // 创建图像URL
+    const imageURL = await plantDataManager.fileSystemManager.createImageURL(targetImage);
+    
+    return {
+      url: imageURL,
+      data: targetImage
+    };
+    
+  } catch (error) {
+    console.error('获取图像数据失败:', error);
+    return null;
+  }
+}
+
+/**
+ * 显示图像详情模态框
+ */
+function showImageDetailModal(imageId) {
+  // 创建详情模态框 - 简单实现，显示原图和标注点
+  const modalHTML = `
+    <div id="image-detail-modal" class="modal" style="display: flex; z-index: 2000;">
+      <div class="modal-content" style="max-width: 90vw; max-height: 90vh; padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+          <h3 style="margin: 0;">图像详情</h3>
+          <button onclick="closeImageDetailModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 14px; color: #6b7280; margin-bottom: 10px; word-break: break-all;">
+            ${imageId}
+          </div>
+          <div style="max-width: 100%; max-height: 70vh; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+            <canvas id="detail-canvas" style="max-width: 100%; height: auto;"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 移除已存在的详情模态框
+  const existingModal = document.getElementById('image-detail-modal');
+  if (existingModal) {
+    existingModal.remove();
+  }
+  
+  // 添加到body
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  
+  // 渲染大图
+  renderImageDetail(imageId);
+  
+  // 绑定关闭事件
+  window.closeImageDetailModal = function() {
+    const modal = document.getElementById('image-detail-modal');
+    if (modal) {
+      modal.remove();
+    }
+  };
+}
+
+/**
+ * 渲染图像详情
+ */
+async function renderImageDetail(imageId) {
+  const canvas = document.getElementById('detail-canvas');
+  if (!canvas) return;
+  
+  try {
+    // 获取标注数据
+    const previewCanvas = document.querySelector(`[data-image-id="${imageId}"]`);
+    const annotations = previewCanvas ? JSON.parse(previewCanvas.dataset.annotations) : [];
+    
+    // 获取图像数据
+    const imageData = await getImageDataFromId(imageId);
+    if (!imageData) {
+      throw new Error('无法获取图像数据');
+    }
+    
+    // 加载图像
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    
+    await new Promise((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('图像加载失败'));
+      image.src = imageData.url;
+    });
+    
+    // 设置canvas尺寸（保持原图比例，但限制最大尺寸）
+    const maxWidth = 800;
+    const maxHeight = 600;
+    
+    let drawWidth = image.width;
+    let drawHeight = image.height;
+    
+    if (drawWidth > maxWidth || drawHeight > maxHeight) {
+      const scale = Math.min(maxWidth / drawWidth, maxHeight / drawHeight);
+      drawWidth *= scale;
+      drawHeight *= scale;
+    }
+    
+    canvas.width = drawWidth;
+    canvas.height = drawHeight;
+    
+    const ctx = canvas.getContext('2d');
+    
+    // 绘制图像
+    ctx.drawImage(image, 0, 0, drawWidth, drawHeight);
+    
+    // 绘制标注点
+    if (annotations && annotations.length > 0) {
+      const scaleX = drawWidth / image.width;
+      const scaleY = drawHeight / image.height;
+      
+      annotations.forEach((annotation, index) => {
+        const x = annotation.x * scaleX;
+        const y = annotation.y * scaleY;
+        
+        // 绘制标注点
+        ctx.fillStyle = '#ef4444';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        
+        ctx.beginPath();
+        ctx.arc(x, y, 8, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+        
+        // 绘制标注点编号
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText((index + 1).toString(), x, y);
+      });
+    }
+    
+  } catch (error) {
+    console.error('渲染图像详情失败:', error);
+    canvas.parentElement.innerHTML = '<div style="color: #dc2626; padding: 20px;">图像加载失败</div>';
+  }
+}
+
+// 全局函数：切换分支点预览
+window.toggleBranchPointPreview = function(show = null) {
+  if (branchPointPreviewManager) {
+    branchPointPreviewManager.toggleVisibility(show);
+  }
+};
+
+/**
+ * 导航到上一张图片
+ */
+async function navigateToPreviousImage() {
+  if (!appState.currentPlant || !appState.currentImage) {
+    console.log('没有当前植物或图像，无法导航');
+    return;
+  }
+  
+  try {
+    // 获取当前视角的所有图像
+    const images = await plantDataManager.getPlantImages(
+      appState.currentPlant.id, 
+      appState.currentPlant.selectedViewAngle
+    );
+    
+    if (images.length <= 1) {
+      console.log('只有一张图像，无法导航到上一张');
+      return;
+    }
+    
+    // 找到当前图像的索引
+    const currentIndex = images.findIndex(img => img.id === appState.currentImage.id);
+    
+    if (currentIndex === -1) {
+      console.warn('未找到当前图像在列表中的位置');
+      return;
+    }
+    
+    // 计算上一张图像的索引（循环到最后一张）
+    const previousIndex = currentIndex === 0 ? images.length - 1 : currentIndex - 1;
+    const previousImage = images[previousIndex];
+    
+    console.log(`导航：从第${currentIndex + 1}张切换到第${previousIndex + 1}张`);
+    
+    // 切换到上一张图像
+    await handleImageSelect(previousImage, true);
+    
+  } catch (error) {
+    console.error('导航到上一张图像失败:', error);
+    showError('图像导航失败', error.message);
+  }
+}
+
+/**
+ * 导航到下一张图片
+ * @param {boolean} autoMode - 是否为自动化模式（不循环回第一张）
+ * @returns {boolean} 是否成功切换到下一张图片
+ */
+async function navigateToNextImage(autoMode = false) {
+  if (!appState.currentPlant || !appState.currentImage) {
+    console.log('没有当前植物或图像，无法导航');
+    return false;
+  }
+
+  try {
+    // 获取当前视角的所有图像
+    const images = await plantDataManager.getPlantImages(
+      appState.currentPlant.id,
+      appState.currentPlant.selectedViewAngle
+    );
+
+    if (images.length <= 1) {
+      console.log('只有一张图像，无法导航到下一张');
+      return false;
+    }
+
+    // 找到当前图像的索引
+    const currentIndex = images.findIndex(img => img.id === appState.currentImage.id);
+
+    if (currentIndex === -1) {
+      console.warn('未找到当前图像在列表中的位置');
+      return false;
+    }
+
+    // 检查是否已经是最后一张
+    if (currentIndex === images.length - 1) {
+      if (autoMode) {
+        console.log('自动化模式：已经是最后一张图片，不循环');
+        return false;
+      }
+      // 非自动化模式：循环到第一张
+    }
+
+    // 计算下一张图像的索引
+    const nextIndex = currentIndex === images.length - 1 ? 0 : currentIndex + 1;
+    const nextImage = images[nextIndex];
+
+    console.log(`导航：从第${currentIndex + 1}张切换到第${nextIndex + 1}张`);
+
+    // 切换到下一张图像
+    await handleImageSelect(nextImage, true);
+    return true;
+
+  } catch (error) {
+    console.error('导航到下一张图像失败:', error);
+    showError('图像导航失败', error.message);
+    return false;
+  }
+}
+
+/**
+ * 处理自动化方向选择（传统标注升级）
+ */
+function handleAutoDirectionSelection() {
+  if (!annotationTool) {
+    showError('功能不可用', '标注工具未初始化');
+    return;
+  }
+
+  // 检查是否有标注点
+  if (!annotationTool.keypoints || annotationTool.keypoints.length === 0) {
+    showError('传统标注升级', '当前图像没有标注点，请先添加标注点');
+    return;
+  }
+
+  // 启动自动化方向升级模式
+  const success = annotationTool.startAutoDirectionMode();
+
+  if (!success) {
+    // startAutoDirectionMode 内部已经显示了提示信息
+    return;
+  }
+
+  // 更新按钮状态
+  const autoDirectionBtn = document.getElementById('auto-direction-btn');
+  if (autoDirectionBtn) {
+    console.log('[调试] 更新按钮状态为自动模式');
+
+    // 先移除现有的事件监听器
+    autoDirectionBtn.removeEventListener('click', handleAutoDirectionSelection);
+
+    // 更新按钮外观
+    autoDirectionBtn.textContent = 'Exit Auto Mode';
+    autoDirectionBtn.classList.add('active');
+
+    // 创建新的事件处理函数
+    const pauseHandler = () => {
+      console.log('[调试] 自动化按钮被点击，暂停模式');
+      annotationTool.pauseAutoDirectionMode();
+    };
+
+    // 添加新的事件监听器
+    autoDirectionBtn.addEventListener('click', pauseHandler);
+
+    // 保存处理函数引用，以便后续移除
+    autoDirectionBtn._pauseHandler = pauseHandler;
+  }
+
+  updateProgressInfo('传统标注升级模式已启动。移动鼠标选择方向，左键确认，右键暂停。');
+}
+
+/**
+ * 显示跳过植株模态框
+ */
+function showSkipPlantModal(plantId, event) {
+  // 阻止事件冒泡，避免触发植株选择
+  if (event) {
+    event.stopPropagation();
+  }
+
+  const plant = appState.plants.find(p => p.id === plantId);
+  if (!plant) {
+    showError('错误', '未找到指定的植株');
+    return;
+  }
+
+  // 设置植株名称
+  const plantNameElement = document.getElementById('skip-plant-name');
+  if (plantNameElement) {
+    plantNameElement.textContent = plant.id;
+  }
+
+  // 清空之前的输入
+  const reasonTextarea = document.getElementById('skip-reason');
+  if (reasonTextarea) {
+    reasonTextarea.value = '';
+  }
+
+  // 显示模态框
+  const modal = document.getElementById('skip-plant-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+    modal.dataset.plantId = plantId;
+
+    // 聚焦到文本框
+    setTimeout(() => {
+      if (reasonTextarea) {
+        reasonTextarea.focus();
+      }
+    }, 100);
+  }
+}
+
+/**
+ * 隐藏跳过植株模态框
+ */
+function hideSkipPlantModal() {
+  const modal = document.getElementById('skip-plant-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.dataset.plantId = '';
+  }
+}
+
+/**
+ * 确认跳过植株
+ */
+async function confirmSkipPlant() {
+  const modal = document.getElementById('skip-plant-modal');
+  const plantId = modal?.dataset.plantId;
+  const reasonTextarea = document.getElementById('skip-reason');
+  const reason = reasonTextarea?.value.trim();
+
+  if (!plantId) {
+    showError('错误', '未找到要跳过的植株');
+    return;
+  }
+
+  if (!reason) {
+    showError('输入错误', '请输入跳过原因');
+    reasonTextarea?.focus();
+    return;
+  }
+
+  try {
+    // 更新植株状态
+    await plantDataManager.skipPlant(plantId, reason);
+
+    // 更新UI
+    const plant = appState.plants.find(p => p.id === plantId);
+    if (plant) {
+      plant.status = 'skipped';
+      plant.skipReason = reason;
+      plant.skipDate = new Date().toISOString();
+
+      // 重新渲染植株列表项
+      const plantItem = document.querySelector(`[data-plant-id="${plantId}"]`);
+      if (plantItem) {
+        const newItem = createPlantListItem(plant);
+        plantItem.parentNode.replaceChild(newItem, plantItem);
+      }
+
+      // 更新统计
+      updateProgressStats();
+
+      // 如果当前选中的是被跳过的植株，清除选择
+      if (appState.currentPlant?.id === plantId) {
+        appState.currentPlant = null;
+        updateCurrentPlantTitle({ id: '请选择植株' });
+        // 清空缩略图容器
+        const thumbnailContainer = document.getElementById('thumbnail-container');
+        if (thumbnailContainer) {
+          thumbnailContainer.innerHTML = '<div class="no-images">请选择植株</div>';
+        }
+
+        // 清空标注画布
+        if (annotationTool) {
+          annotationTool.clearKeypoints();
+        }
+      }
+    }
+
+    hideSkipPlantModal();
+    showSuccess('跳过成功', `植株 ${plantId} 已标记为跳过`);
+
+  } catch (error) {
+    console.error('跳过植株失败:', error);
+    showError('跳过失败', error.message);
+  }
+}
+
+/**
+ * 处理状态过滤器变化
+ */
+function handleStatusFilterChange() {
+  const statusFilter = document.getElementById('status-filter');
+  const searchInput = document.getElementById('plant-search');
+
+  if (!statusFilter || !plantDataManager) return;
+
+  const selectedStatus = statusFilter.value;
+  const searchQuery = searchInput?.value.trim() || '';
+
+  // 应用过滤
+  applyPlantsFilter(selectedStatus, searchQuery);
+}
+
+/**
+ * 处理植株搜索输入
+ */
+function handlePlantSearchInput() {
+  const statusFilter = document.getElementById('status-filter');
+  const searchInput = document.getElementById('plant-search');
+
+  if (!searchInput || !plantDataManager) return;
+
+  const searchQuery = searchInput.value.trim();
+  const selectedStatus = statusFilter?.value || 'all';
+
+  // 应用过滤
+  applyPlantsFilter(selectedStatus, searchQuery);
+}
+
+/**
+ * 应用植株过滤
+ */
+function applyPlantsFilter(status, searchQuery) {
+  if (!plantDataManager) return;
+
+  let filteredPlants = plantDataManager.filterPlantsByStatus(status);
+
+  // 如果有搜索查询，进一步过滤
+  if (searchQuery) {
+    const lowerQuery = searchQuery.toLowerCase();
+    filteredPlants = filteredPlants.filter(plant =>
+      plant.id.toLowerCase().includes(lowerQuery) ||
+      plant.name.toLowerCase().includes(lowerQuery)
+    );
+  }
+
+  // 重新渲染植株列表
+  renderPlantList(filteredPlants);
+
+  console.log(`过滤结果: 状态=${status}, 搜索="${searchQuery}", 结果=${filteredPlants.length}个植株`);
+}
+
+// 将函数添加到全局对象，以便AnnotationTool可以访问
+window.handleAutoDirectionSelection = handleAutoDirectionSelection;
+window.navigateToNextImage = navigateToNextImage;
+window.showSkipPlantModal = showSkipPlantModal;
+
+/**
+ * 处理锁定倍数开关变化
+ */
+function handleZoomLockChange() {
+  const zoomLockCheckbox = document.getElementById('zoom-lock-checkbox');
+  const zoomLockValue = document.getElementById('zoom-lock-value');
+
+  if (zoomLockCheckbox && zoomLockValue) {
+    const isLocked = zoomLockCheckbox.checked;
+    zoomLockValue.disabled = !isLocked;
+
+    console.log(`缩放锁定: ${isLocked ? '开启' : '关闭'}`);
+
+    if (isLocked) {
+      const lockValue = parseFloat(zoomLockValue.value);
+      console.log(`锁定倍数设置为: ${lockValue}x`);
+    }
+  }
+}
+
+/**
+ * 处理锁定倍数值变化
+ */
+function handleZoomLockValueChange() {
+  const zoomLockValue = document.getElementById('zoom-lock-value');
+  if (zoomLockValue) {
+    const lockValue = parseFloat(zoomLockValue.value);
+    console.log(`锁定倍数更新为: ${lockValue}x`);
+  }
+}
+
+/**
+ * 处理自动切换到预期位置开关变化
+ */
+function handleAutoMoveChange() {
+  const autoMoveCheckbox = document.getElementById('auto-move-checkbox');
+
+  if (autoMoveCheckbox) {
+    const isEnabled = autoMoveCheckbox.checked;
+    console.log(`自动切换到预期位置: ${isEnabled ? '开启' : '关闭'}`);
+
+    // 通知AnnotationTool更新设置
+    if (annotationTool && typeof annotationTool.setAutoMoveToExpectedPosition === 'function') {
+      annotationTool.setAutoMoveToExpectedPosition(isEnabled);
+    }
+  }
+}
+
+/**
+ * 获取自动切换设置
+ */
+function getAutoMoveSettings() {
+  const autoMoveCheckbox = document.getElementById('auto-move-checkbox');
+  return {
+    isEnabled: autoMoveCheckbox ? autoMoveCheckbox.checked : false
+  };
+}
+
+/**
+ * 获取锁定倍数设置
+ */
+function getZoomLockSettings() {
+  const zoomLockCheckbox = document.getElementById('zoom-lock-checkbox');
+  const zoomLockValue = document.getElementById('zoom-lock-value');
+
+  if (zoomLockCheckbox && zoomLockValue) {
+    return {
+      isLocked: zoomLockCheckbox.checked,
+      lockValue: parseFloat(zoomLockValue.value) || 2.5
+    };
+  }
+
+  return { isLocked: false, lockValue: 2.5 };
+}
+
+/**
+ * 更新全屏加载进度
+ */
+function updateFullscreenLoading(progress, subtitle, details) {
+  const progressFill = document.getElementById('progress-fill');
+  const progressText = document.getElementById('progress-text');
+  const loadingSubtitle = document.getElementById('loading-subtitle');
+  const loadingDetails = document.getElementById('loading-details');
+  
+  if (progressFill) {
+    progressFill.style.width = `${progress}%`;
+  }
+  
+  if (progressText) {
+    progressText.textContent = `${progress}%`;
+  }
+  
+  if (loadingSubtitle) {
+    loadingSubtitle.textContent = subtitle;
+  }
+  
+  if (loadingDetails) {
+    loadingDetails.textContent = details;
+  }
+}
+
+/**
+ * 隐藏全屏加载指示器
+ */
+function hideFullscreenLoading() {
+  const fullscreenLoading = document.getElementById('fullscreen-loading');
+  if (fullscreenLoading) {
+    fullscreenLoading.style.display = 'none';
+  }
+}
+
+/**
+ * 自动连接数据集
+ */
+async function autoConnectDataset() {
+  console.log('开始自动连接数据集...');
+  
+  try {
+    updateFullscreenLoading(95, 'Connecting to backend...', 'Establishing connection to the dataset service');
+    
+    // 检查后端连接
+    let datasetInfo;
+    try {
+      datasetInfo = await plantDataManager.fileSystemManager.getDatasetInfo();
+    } catch (connectionError) {
+      throw new ConnectionError(
+        '无法连接到后端服务',
+        '请确保后端服务已启动。运行 ./start-backend.sh 启动服务器',
+        {
+          originalError: connectionError,
+          serverUrl: 'http://localhost:3003',
+          suggestion: '尝试运行: ./start-backend.sh'
+        }
+      );
+    }
+    
+    if (!datasetInfo) {
+      throw new Error('后端服务响应异常：数据集信息为空');
+    }
+
+    console.log('连接的数据集:', datasetInfo.datasetPath);
+
+    updateFullscreenLoading(98, 'Loading plant data...', 'Scanning plant directories and loading dataset');
+
+    // 验证目录结构
+    await validateDatasetStructure();
+
+    // 使用PlantDataManager加载数据集
+    const plants = await plantDataManager.loadDataset();
+    
+    // 更新应用状态
+    appState.currentDatasetPath = datasetInfo.datasetPath;
+    appState.plants = plants;
+    currentDataset = {
+      path: datasetInfo.datasetPath,
+      name: 'Brassica napus dataset',
+      plantCount: plants.length
+    };
+    
+    updateFullscreenLoading(100, 'Dataset loaded successfully!', `Successfully loaded ${plants.length} plants`);
+    
+    // 短暂显示成功状态
+    setTimeout(() => {
+      hideFullscreenLoading();
+      
+      // 显示植物列表
+      renderPlantList(plants);
+      
+      // 初始更新统计显示
+      updateProgressStats();
+      
+      // 更新进度信息
+      updateProgressInfo(`Loaded ${plants.length} plants`);
+      
+      console.log(`成功自动加载数据集: ${plants.length} 个植物`);
+    }, 1000);
+    
+  } catch (error) {
+    console.error('自动连接数据集失败:', error);
+    
+    if (error instanceof ConnectionError) {
+      hideFullscreenLoading();
+      showConnectionError(error);
+    } else {
+      hideFullscreenLoading();
+      showError('数据集连接失败', `${error.message}\n\n请检查网络连接和后端服务状态`);
+    }
+    
+    throw error;
+  }
+}
+
+/**
+ * 自定义连接错误类
+ */
+class ConnectionError extends Error {
+  constructor(title, message, details = {}) {
+    super(message);
+    this.name = 'ConnectionError';
+    this.title = title;
+    this.details = details;
+  }
+}
+
+/**
+ * 显示连接错误的专门处理
+ */
+function showConnectionError(error) {
+  const errorMessage = `${error.title}\n\n${error.message}`;
+  const detailMessage = error.details.suggestion ? 
+    `\n\n建议解决方案：\n${error.details.suggestion}` : '';
+  
+  showError(
+    '后端服务连接失败', 
+    errorMessage + detailMessage + '\n\n服务器地址: ' + (error.details.serverUrl || 'http://localhost:3003')
+  );
+  
+  // 添加重试按钮到错误模态框
+  addRetryButton();
+}
+
+/**
+ * 添加重试按钮到错误模态框
+ */
+function addRetryButton() {
+  const errorModal = document.getElementById('error-modal');
+  if (!errorModal) return;
+  
+  // 检查是否已存在重试按钮
+  if (errorModal.querySelector('.retry-button')) return;
+  
+  const retryButton = document.createElement('button');
+  retryButton.textContent = '重试连接';
+  retryButton.className = 'retry-button';
+  retryButton.style.cssText = `
+    margin-left: 10px;
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  `;
+  
+  retryButton.onclick = async () => {
+    errorModal.style.display = 'none';
+    showFullscreenLoading();
+    
+    try {
+      await autoConnectDataset();
+    } catch (retryError) {
+      console.error('重试失败:', retryError);
+    }
+  };
+  
+  // 添加到错误模态框的按钮区域
+  const buttonArea = errorModal.querySelector('.error-buttons') || errorModal;
+  buttonArea.appendChild(retryButton);
+}
