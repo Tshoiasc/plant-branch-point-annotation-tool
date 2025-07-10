@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>笔记系统修复测试</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            max-width: 800px; 
+            margin: 0 auto; 
+        }
+        .test-section { 
+            margin: 20px 0; 
+            padding: 15px; 
+            border: 1px solid #ddd; 
+            border-radius: 5px; 
+        }
+        .status { 
+            padding: 5px 10px; 
+            border-radius: 3px; 
+            font-weight: bold; 
+            margin: 5px 0; 
+        }
+        .pass { background-color: #d4edda; color: #155724; }
+        .fail { background-color: #f8d7da; color: #721c24; }
+        button { 
+            padding: 10px 15px; 
+            margin: 5px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            background-color: #007bff; 
+            color: white; 
+        }
+        button:hover { background-color: #0056b3; }
+        #results { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>笔记系统修复测试</h1>
+    
+    <div class="test-section">
+        <h2>测试 1: 后端API端点验证</h2>
+        <button onclick="testBackendValidation()">测试后端验证</button>
+        <div id="backend-test-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试 2: 前端错误处理</h2>
+        <button onclick="testFrontendErrorHandling()">测试前端错误处理</button>
+        <div id="frontend-test-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试 3: 模态框初始化</h2>
+        <button onclick="testModalInitialization()">测试模态框初始化</button>
+        <div id="modal-test-results"></div>
+    </div>
+    
+    <div id="results"></div>
+
+    <script type="module">
+        import { NoteManager } from './src/core/NoteManager.js';
+        import { NoteUI } from './src/core/NoteUI.js';
+        import { HttpFileSystemManager } from './src/core/HttpFileSystemManager.js';
+
+        // 全局测试对象
+        window.testManager = null;
+        window.testUI = null;
+
+        // 测试后端验证
+        window.testBackendValidation = async function() {
+            const resultsDiv = document.getElementById('backend-test-results');
+            resultsDiv.innerHTML = '<div>测试中...</div>';
+            
+            const tests = [
+                {
+                    name: '有效植物ID',
+                    url: '/api/notes/plant/BR017-113112',
+                    expectedStatus: 200
+                },
+                {
+                    name: '无效植物ID格式',
+                    url: '/api/notes/plant/invalid_id',
+                    expectedStatus: 400
+                },
+                {
+                    name: '空植物ID',
+                    url: '/api/notes/plant/',
+                    expectedStatus: 404
+                },
+                {
+                    name: '有效图像ID',
+                    url: '/api/notes/image/BR017-113112/BR017-113112_sv-000_test.png',
+                    expectedStatus: 200
+                },
+                {
+                    name: '无效图像ID',
+                    url: '/api/notes/image/BR017-113112/invalid_image',
+                    expectedStatus: 400
+                }
+            ];
+            
+            let html = '';
+            for (const test of tests) {
+                try {
+                    const response = await fetch(`http://localhost:3003${test.url}`);
+                    const data = await response.json();
+                    const passed = response.status === test.expectedStatus;
+                    
+                    html += `<div class="status ${passed ? 'pass' : 'fail'}">
+                        ${test.name}: ${passed ? '通过' : '失败'} 
+                        (状态: ${response.status}, 期望: ${test.expectedStatus})
+                    </div>`;
+                } catch (error) {
+                    html += `<div class="status fail">${test.name}: 网络错误 - ${error.message}</div>`;
+                }
+            }
+            
+            resultsDiv.innerHTML = html;
+        };
+
+        // 测试前端错误处理
+        window.testFrontendErrorHandling = async function() {
+            const resultsDiv = document.getElementById('frontend-test-results');
+            resultsDiv.innerHTML = '<div>测试中...</div>';
+            
+            try {
+                // 初始化管理器
+                const httpManager = new HttpFileSystemManager();
+                window.testManager = new NoteManager(httpManager);
+                
+                let html = '';
+                
+                // 测试无效植物ID的错误处理
+                try {
+                    await window.testManager.getPlantNotes('invalid_id');
+                    html += '<div class="status fail">无效植物ID测试: 应该抛出错误但没有</div>';
+                } catch (error) {
+                    const hasProperError = error.message.includes('格式无效');
+                    html += `<div class="status ${hasProperError ? 'pass' : 'fail'}">
+                        无效植物ID测试: ${hasProperError ? '通过' : '失败'} - ${error.message}
+                    </div>`;
+                }
+                
+                // 测试有效植物ID
+                try {
+                    const notes = await window.testManager.getPlantNotes('BR017-113112');
+                    html += '<div class="status pass">有效植物ID测试: 通过 - 成功获取笔记</div>';
+                } catch (error) {
+                    html += `<div class="status fail">有效植物ID测试: 失败 - ${error.message}</div>`;
+                }
+                
+                resultsDiv.innerHTML = html;
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="status fail">前端测试失败: ${error.message}</div>`;
+            }
+        };
+
+        // 测试模态框初始化
+        window.testModalInitialization = function() {
+            const resultsDiv = document.getElementById('modal-test-results');
+            resultsDiv.innerHTML = '<div>测试中...</div>';
+            
+            try {
+                // 创建测试用的DOM结构
+                const testContainer = document.createElement('div');
+                testContainer.id = 'test-container';
+                document.body.appendChild(testContainer);
+                
+                // 模拟HttpFileSystemManager
+                const mockHttpManager = {
+                    baseUrl: 'http://localhost:3003/api'
+                };
+                
+                const mockNoteManager = {
+                    httpManager: mockHttpManager
+                };
+                
+                // 初始化NoteUI
+                window.testUI = new NoteUI(mockNoteManager);
+                
+                let html = '';
+                
+                // 检查模态框在延迟后是否正确创建且隐藏
+                setTimeout(() => {
+                    const noteModal = document.getElementById('note-modal');
+                    const noteListModal = document.getElementById('note-list-modal');
+                    
+                    if (noteModal) {
+                        const isHidden = noteModal.style.display === 'none';
+                        html += `<div class="status ${isHidden ? 'pass' : 'fail'}">
+                            笔记模态框创建且隐藏: ${isHidden ? '通过' : '失败'}
+                        </div>`;
+                    } else {
+                        html += '<div class="status fail">笔记模态框创建: 失败 - 模态框不存在</div>';
+                    }
+                    
+                    if (noteListModal) {
+                        const isHidden = noteListModal.style.display === 'none';
+                        html += `<div class="status ${isHidden ? 'pass' : 'fail'}">
+                            笔记列表模态框创建且隐藏: ${isHidden ? '通过' : '失败'}
+                        </div>`;
+                    } else {
+                        html += '<div class="status fail">笔记列表模态框创建: 失败 - 模态框不存在</div>';
+                    }
+                    
+                    // 检查按钮是否正确创建
+                    const plantNoteBtn = document.getElementById('plant-note-btn');
+                    const imageNoteBtn = document.getElementById('image-note-btn');
+                    
+                    if (plantNoteBtn) {
+                        html += '<div class="status pass">植物笔记按钮创建: 通过</div>';
+                    } else {
+                        html += '<div class="status fail">植物笔记按钮创建: 失败</div>';
+                    }
+                    
+                    if (imageNoteBtn) {
+                        const hasClickStyle = imageNoteBtn.style.cursor === 'pointer' && 
+                                            imageNoteBtn.style.pointerEvents === 'auto';
+                        html += `<div class="status ${hasClickStyle ? 'pass' : 'fail'}">
+                            图像笔记按钮可点击样式: ${hasClickStyle ? '通过' : '失败'}
+                        </div>`;
+                    } else {
+                        html += '<div class="status fail">图像笔记按钮创建: 失败</div>';
+                    }
+                    
+                    resultsDiv.innerHTML = html;
+                    
+                    // 清理测试容器
+                    testContainer.remove();
+                }, 500);
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="status fail">模态框测试失败: ${error.message}</div>`;
+            }
+        };
+    </script>
+</body>
+</html>
