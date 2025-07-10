@@ -12,6 +12,8 @@ import { FileSystemManager } from './core/FileSystemManager.js';
 import { PlantDataManager } from './core/PlantDataManager.js';
 import { AnnotationTool } from './core/AnnotationTool.js';
 import { BranchPointPreviewManager } from './core/BranchPointPreviewManager.js';
+import { NoteManager } from './core/NoteManager.js';
+import { NoteUI } from './core/NoteUI.js';
 
 // DOM元素引用
 let app = null;
@@ -23,6 +25,8 @@ let errorModal = null;
 let plantDataManager = null;
 let annotationTool = null;
 let branchPointPreviewManager = null;
+let noteManager = null;
+let noteUI = null;
 let currentDataset = null;
 
 // 应用状态
@@ -92,6 +96,23 @@ async function initializeApp() {
       window.PlantAnnotationTool.branchPointPreviewManager = branchPointPreviewManager;
     } catch (error) {
       console.warn('BranchPointPreviewManager初始化延迟:', error.message);
+    }
+    
+    updateFullscreenLoading(55, 'Setting up note system...', 'Initializing note management functionality');
+    
+    // 初始化笔记系统
+    try {
+      noteManager = new NoteManager(plantDataManager.fileSystemManager);
+      noteUI = new NoteUI(noteManager);
+      
+      // 启动自动清理
+      noteManager.startAutoCleanup();
+      
+      window.PlantAnnotationTool.noteManager = noteManager;
+      window.PlantAnnotationTool.noteUI = noteUI;
+      console.log('笔记系统初始化成功');
+    } catch (error) {
+      console.warn('NoteManager初始化延迟:', error.message);
     }
     
     updateFullscreenLoading(60, 'Checking compatibility...', 'Verifying browser support and backend connection');
@@ -613,45 +634,52 @@ function renderPlantList(plants) {
   // 更新统计显示
   updateProgressStats();
   
+  // Update note badges for all plants
+  if (window.noteUI) {
+    setTimeout(() => {
+      window.noteUI.updateAllPlantNoteBadges();
+    }, 100);
+  }
+  
   console.log(`渲染了 ${plants.length} 个植物列表项`);
 }
 
 /**
- * 创建植物列表项
+ * Create plant list item with note indicators
  */
 function createPlantListItem(plant) {
   const item = document.createElement('div');
   item.className = 'plant-item';
   item.dataset.plantId = plant.id;
   
-  // 状态图标
+  // Status icon
   const statusIcon = getStatusIcon(plant.status);
   
-  // 图像数量信息
+  // Image count info
   const imageCountText = plant.imageCount > 0 ? 
     `${plant.imageCount} images` : 
     (plant.hasImages ? 'loading...' : 'no image');
   
-  // 视角信息
+  // View angle info
   const viewAnglesText = plant.viewAngles.length > 0 ? 
     `view: ${plant.viewAngles.join(', ')}` :
     'view: checking...';
     
-  // 选中视角信息
+  // Selected view info
   const selectedViewText = plant.selectedViewAngle ? 
-    `Choosed: ${plant.selectedViewAngle}` : '';
+    `Chosen: ${plant.selectedViewAngle}` : '';
   
-  // 跳过状态处理
+  // Skip status handling
   const isSkipped = plant.status === 'skipped';
   if (isSkipped) {
     item.classList.add('skipped');
   }
 
-  // 跳过原因显示
+  // Skip reason display
   const skipReasonHtml = isSkipped && plant.skipReason ?
     `<div class="skip-reason">skip reason: ${plant.skipReason}</div>` : '';
 
-  // 跳过按钮（只在非跳过状态下显示）
+  // Skip button (only show when not skipped)
   const skipButtonHtml = !isSkipped ?
     `<button class="skip-button" onclick="showSkipPlantModal('${plant.id}', event)">Skip</button>` : '';
 
@@ -660,6 +688,7 @@ function createPlantListItem(plant) {
       <div class="plant-header">
         <div class="plant-status">${statusIcon}</div>
         <div class="plant-id">${plant.id}</div>
+        <div class="plant-note-badge" id="note-badge-${plant.id}" style="display: none;"></div>
         ${skipButtonHtml}
       </div>
       <div class="plant-info">
@@ -674,10 +703,67 @@ function createPlantListItem(plant) {
     </div>
   `;
   
-  // 点击事件
+  // Click event
   item.addEventListener('click', () => handlePlantSelect(plant));
   
+  // Asynchronously load note count
+  loadPlantNoteCount(plant.id);
+  
   return item;
+}
+
+/**
+ * Load and display plant note count
+ */
+async function loadPlantNoteCount(plantId) {
+  try {
+    // Check if note system is available
+    if (!window.PlantAnnotationTool || !window.PlantAnnotationTool.noteManager) {
+      return;
+    }
+    
+    const noteManager = window.PlantAnnotationTool.noteManager;
+    const notes = await noteManager.getPlantNotes(plantId);
+    
+    if (notes && notes.length > 0) {
+      const badge = document.getElementById(`note-badge-${plantId}`);
+      if (badge) {
+        badge.innerHTML = `<span class="note-count">📝 ${notes.length}</span>`;
+        badge.style.display = 'inline-block';
+        badge.className = 'plant-note-badge';
+      }
+    }
+  } catch (error) {
+    // Silently handle errors - note loading is not critical for UI
+    console.debug(`Note loading failed for plant ${plantId}:`, error.message);
+  }
+}
+
+/**
+ * Load and display image note count
+ */
+async function loadImageNoteCount(plantId, imageId) {
+  try {
+    // Check if note system is available
+    if (!window.PlantAnnotationTool || !window.PlantAnnotationTool.noteManager) {
+      return;
+    }
+    
+    const noteManager = window.PlantAnnotationTool.noteManager;
+    const notes = await noteManager.getImageNotes(plantId, imageId);
+    
+    if (notes && notes.length > 0) {
+      const badge = document.getElementById(`image-note-badge-${imageId}`);
+      if (badge) {
+        badge.innerHTML = `<span class="image-note-count">📝 ${notes.length}</span>`;
+        badge.style.display = 'inline-block';
+        badge.className = 'image-note-badge';
+      }
+    }
+  } catch (error) {
+    // Silently handle errors - note loading is not critical for UI
+    console.debug(`Note loading failed for image ${imageId}:`, error.message);
+  }
 }
 
 /**
@@ -740,6 +826,18 @@ async function handlePlantSelect(plant) {
     const imagesByView = await plantDataManager.getPlantImages(plant.id);
     
     console.log(`植物 ${plant.id} 图像数据:`, imagesByView);
+    
+    // 更新笔记系统当前植物
+    if (window.PlantAnnotationTool?.noteUI) {
+      window.PlantAnnotationTool.noteUI.setCurrentPlant(plant.id);
+    }
+
+    // 预加载笔记（性能优化）
+    if (window.PlantAnnotationTool?.noteManager) {
+      // 获取植物的所有图像ID进行预加载
+      const allImageIds = Object.values(imagesByView).flat().map(img => img.id);
+      window.PlantAnnotationTool.noteManager.preloadNotes(plant.id, allImageIds.slice(0, 5)); // 只预加载前5个
+    }
     
     // 显示视角选择界面
     await showViewAngleSelection(plant, imagesByView);
@@ -903,7 +1001,7 @@ async function renderImageThumbnails(images) {
 }
 
 /**
- * 创建图像缩略图
+ * Create image thumbnail with note indicators
  */
 async function createImageThumbnail(image, isFirst = false) {
   const thumbnail = document.createElement('div');
@@ -914,7 +1012,7 @@ async function createImageThumbnail(image, isFirst = false) {
     thumbnail.classList.add('selected');
   }
 
-  // 检查是否有标注
+  // Check for annotations
   let hasAnnotations = false;
   let annotationCount = 0;
 
@@ -928,26 +1026,32 @@ async function createImageThumbnail(image, isFirst = false) {
       }
     }
   } catch (error) {
-    // 忽略错误，继续渲染
+    // Ignore errors, continue rendering
   }
 
   thumbnail.innerHTML = `
     <div class="thumbnail-image">
       <img src="" alt="${image.name}" data-src="${image.id}" />
-      <div class="thumbnail-loading">加载中...</div>
+      <div class="thumbnail-loading">Loading...</div>
       ${hasAnnotations ? `<div class="annotation-badge">${annotationCount}</div>` : ''}
+      <div class="image-note-badge" id="image-note-badge-${image.id}" style="display: none;"></div>
     </div>
     <div class="thumbnail-info">
       <div class="image-time">${image.timeString}</div>
-      ${hasAnnotations ? '<div class="annotation-status">✓ 已标注</div>' : ''}
+      ${hasAnnotations ? '<div class="annotation-status">✓ Annotated</div>' : ''}
     </div>
   `;
 
-  // 点击事件（图片切换）
+  // Click event (image switching)
   thumbnail.addEventListener('click', () => handleImageSelect(image, true));
 
-  // 异步加载图像
+  // Async load image
   loadThumbnailImage(thumbnail, image);
+  
+  // Async load note count
+  if (appState.currentPlant) {
+    loadImageNoteCount(appState.currentPlant.id, image.id);
+  }
 
   return thumbnail;
 }
@@ -1020,6 +1124,11 @@ async function handleImageSelect(image, isImageSwitch = true) {
     
     // 更新缩略图选中状态
     updateImageThumbnailSelection(image.id);
+    
+    // 更新笔记系统当前图像
+    if (window.PlantAnnotationTool?.noteUI) {
+      window.PlantAnnotationTool.noteUI.setCurrentImage(image.id);
+    }
     
     // 设置植物的选中图像（重要：这里恢复了原来的逻辑）
     if (appState.currentPlant) {
@@ -2680,7 +2789,7 @@ function showImageDetailModal(imageId) {
       <div class="modal-content" style="max-width: 90vw; max-height: 90vh; padding: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
           <h3 style="margin: 0;">图像详情</h3>
-          <button onclick="closeImageDetailModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
+          <button onclick="closeImageDetailModal()" class="modal-close"></button>
         </div>
         <div style="text-align: center;">
           <div style="font-size: 14px; color: #6b7280; margin-bottom: 10px; word-break: break-all;">
