@@ -17,23 +17,23 @@
     </style>
 </head>
 <body>
-    <h1>功能测试 - 缩略图和跳过信息</h1>
+    <h1>Feature Test - Thumbnails and Skip Info</h1>
     
     <div class="test-section">
-        <h2>后端连接测试</h2>
-        <button onclick="testConnection()">测试连接</button>
+        <h2>Backend Connection Test</h2>
+        <button onclick="testConnection()">Test Connection</button>
         <div id="connection-results"></div>
     </div>
     
     <div class="test-section">
-        <h2>跳过信息测试</h2>
-        <button onclick="testSkipInfo()">获取跳过信息</button>
+        <h2>Skip Info Test</h2>
+        <button onclick="testSkipInfo()">Get Skip Info</button>
         <div id="skip-results"></div>
     </div>
     
     <div class="test-section">
-        <h2>缩略图测试</h2>
-        <button onclick="testThumbnails()">测试缩略图加载</button>
+        <h2>Thumbnail Test</h2>
+        <button onclick="testThumbnails()">Test Thumbnail Loading</button>
         <div id="thumbnail-results"></div>
     </div>
 
@@ -46,7 +46,7 @@
         
         window.testConnection = async function() {
             const resultsDiv = document.getElementById('connection-results');
-            resultsDiv.innerHTML = '<div class="status info">测试后端连接...</div>';
+            resultsDiv.innerHTML = '<div class="status info">testing backend connection...</div>';
             
             try {
                 await window.fileSystemManager.initialize();
@@ -58,30 +58,30 @@
                     <pre>${JSON.stringify(healthData, null, 2)}</pre>
                 `;
             } catch (error) {
-                resultsDiv.innerHTML = `<div class="status error">❌ 后端连接失败: ${error.message}</div>`;
+                resultsDiv.innerHTML = `<div class="status error">❌ backend connection failed: ${error.message}</div>`;
             }
         };
         
         window.testSkipInfo = async function() {
             const resultsDiv = document.getElementById('skip-results');
-            resultsDiv.innerHTML = '<div class="status info">获取跳过信息...</div>';
+            resultsDiv.innerHTML = '<div class="status info">getting skip info...</div>';
             
             try {
                 const skipInfo = await window.fileSystemManager.getAllSkipInfo();
                 
                 resultsDiv.innerHTML = `
-                    <div class="status success">✅ 跳过信息获取成功!</div>
-                    <div class="status info">找到 ${Object.keys(skipInfo).length} 个跳过的植物:</div>
+                    <div class="status success">✅ skip info got successfully!</div>
+                    <div class="status info">found ${Object.keys(skipInfo).length} skipped plants:</div>
                     <pre>${JSON.stringify(skipInfo, null, 2)}</pre>
                 `;
             } catch (error) {
-                resultsDiv.innerHTML = `<div class="status error">❌ 获取跳过信息失败: ${error.message}</div>`;
+                resultsDiv.innerHTML = `<div class="status error">❌ getting skip info failed: ${error.message}</div>`;
             }
         };
         
         window.testThumbnails = async function() {
             const resultsDiv = document.getElementById('thumbnail-results');
-            resultsDiv.innerHTML = '<div class="status info">测试缩略图加载...</div>';
+            resultsDiv.innerHTML = '<div class="status info">testing thumbnail loading...</div>';
             
             try {
                 // 初始化植物数据管理器
@@ -91,7 +91,7 @@
                 const plants = await window.plantDataManager.fileSystemManager.traversePlantDirectories();
                 
                 if (plants.length === 0) {
-                    resultsDiv.innerHTML = '<div class="status error">❌ 未找到植物数据</div>';
+                    resultsDiv.innerHTML = '<div class="status error">❌ no plant data found</div>';
                     return;
                 }
                 
@@ -99,14 +99,14 @@
                 const firstPlant = plants[0];
                 const imagesByView = await window.plantDataManager.fileSystemManager.readPlantImages(firstPlant.id);
                 
-                let html = `<div class="status success">✅ 找到 ${plants.length} 个植物</div>`;
-                html += `<div class="status info">测试植物: ${firstPlant.id}</div>`;
+                let html = `<div class="status success">✅ found ${plants.length} plants</div>`;
+                html += `<div class="status info">test plant: ${firstPlant.id}</div>`;
                 
                 // 测试第一个视角的前3张图像
                 for (const [viewAngle, images] of Object.entries(imagesByView)) {
                     if (images.length > 0) {
                         html += `<div class="image-test">`;
-                        html += `<h3>视角: ${viewAngle} (${images.length} 张图像)</h3>`;
+                        html += `<h3>view: ${viewAngle} (${images.length} images)</h3>`;
                         
                         // 测试前3张图像
                         const testImages = images.slice(0, 3);
@@ -124,8 +124,8 @@
                                 html += `</div>`;
                                 html += `</div>`;
                             } catch (error) {
-                                html += `<div class="status error">❌ 图像URL生成失败: ${error.message}</div>`;
-                                console.error('图像URL生成失败:', error, imageData);
+                                html += `<div class="status error">❌ image URL generation failed: ${error.message}</div>`;
+                                console.error('image URL generation failed:', error, imageData);
                             }
                         }
                         
@@ -137,8 +137,8 @@
                 resultsDiv.innerHTML = html;
                 
             } catch (error) {
-                resultsDiv.innerHTML = `<div class="status error">❌ 缩略图测试失败: ${error.message}</div>`;
-                console.error('缩略图测试失败:', error);
+                resultsDiv.innerHTML = `<div class="status error">❌ thumbnail test failed: ${error.message}</div>`;
+                console.error('thumbnail test failed:', error);
             }
         };
     </script>

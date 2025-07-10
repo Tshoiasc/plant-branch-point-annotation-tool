@@ -17,6 +17,16 @@ export class NoteManager {
     this.cacheExpiration = 5 * 60 * 1000; // 5分钟缓存过期
     this.requestQueue = new Map(); // 请求队列防止重复请求
     this.noteCounts = new Map(); // 笔记数量缓存
+    
+    // Performance optimizations
+    this.bulkNoteData = null; // 批量笔记数据缓存
+    this.bulkDataTimestamp = 0; // 批量数据时间戳
+    this.performanceMetrics = {
+      requestCount: 0,
+      bulkRequestCount: 0,
+      cacheHits: 0,
+      networkTime: 0
+    };
   }
 
   /**
@@ -126,7 +136,7 @@ export class NoteManager {
   }
 
   /**
-   * 获取植物笔记
+   * 获取植物笔记 (优化版本，优先使用批量数据)
    */
   async getPlantNotes(plantId) {
     if (!plantId) {
@@ -136,23 +146,39 @@ export class NoteManager {
     await this.ensureConnection();
 
     const cacheKey = `plant_${plantId}`;
-    if (this.notes.has(cacheKey)) {
+    
+    // 首先检查是否有批量数据缓存
+    if (this.bulkNoteData && !this.isBulkDataExpired()) {
+      const plantNotes = this.bulkNoteData.plantNotes[plantId] || [];
+      this.notes.set(cacheKey, plantNotes);
+      this.performanceMetrics.cacheHits++;
+      return plantNotes;
+    }
+    
+    // 检查独立缓存
+    if (this.notes.has(cacheKey) && !this.isCacheExpired(cacheKey)) {
+      this.performanceMetrics.cacheHits++;
       return this.notes.get(cacheKey);
     }
 
     return this.httpManager.withRetry(async () => {
+      const startTime = performance.now();
       const url = `${this.httpManager.baseUrl}/notes/plant/${encodeURIComponent(plantId)}`;
       console.log(`[NoteManager] 请求植物笔记 URL: ${url}`);
       
       try {
         const response = await fetch(url);
+        this.performanceMetrics.requestCount++;
 
         if (!response.ok) {
           console.error(`[NoteManager] 请求失败: ${response.status} ${response.statusText}`);
           
           // 提供更详细的错误信息
           if (response.status === 404) {
-            throw new Error(`植物笔记端点不存在 (404): ${url}`);
+            // 404 可能表示该植物没有笔记，返回空数组而不是抛出错误
+            const emptyResult = [];
+            this.setCache(cacheKey, emptyResult);
+            return emptyResult;
           } else if (response.status === 500) {
             throw new Error(`服务器内部错误 (500): 请检查后端服务状态`);
           } else if (response.status === 403) {
@@ -163,16 +189,18 @@ export class NoteManager {
         }
 
         const result = await response.json();
+        this.performanceMetrics.networkTime += performance.now() - startTime;
 
         if (result.success) {
           // 缓存结果
-          this.notes.set(cacheKey, result.data);
+          this.setCache(cacheKey, result.data);
           console.log(`[NoteManager] 成功获取植物 ${plantId} 的 ${result.data.length} 条笔记`);
           return result.data;
         }
 
         throw new Error(result.error || '获取植物笔记失败');
       } catch (fetchError) {
+        this.performanceMetrics.networkTime += performance.now() - startTime;
         // 网络错误处理
         if (fetchError.name === 'TypeError' && fetchError.message.includes('fetch')) {
           throw new Error(`网络连接失败: 无法连接到后端服务 (${url})`);
@@ -183,7 +211,7 @@ export class NoteManager {
   }
 
   /**
-   * 获取图像笔记
+   * 获取图像笔记 (优化版本，优先使用批量数据)
    */
   async getImageNotes(plantId, imageId) {
     if (!plantId) {
@@ -196,23 +224,39 @@ export class NoteManager {
     await this.ensureConnection();
 
     const cacheKey = `image_${plantId}_${imageId}`;
-    if (this.notes.has(cacheKey)) {
+    
+    // 首先检查是否有批量数据缓存
+    if (this.bulkNoteData && !this.isBulkDataExpired()) {
+      const imageNotes = this.bulkNoteData.imageNotes[imageId] || [];
+      this.notes.set(cacheKey, imageNotes);
+      this.performanceMetrics.cacheHits++;
+      return imageNotes;
+    }
+    
+    // 检查独立缓存
+    if (this.notes.has(cacheKey) && !this.isCacheExpired(cacheKey)) {
+      this.performanceMetrics.cacheHits++;
       return this.notes.get(cacheKey);
     }
 
     return this.httpManager.withRetry(async () => {
+      const startTime = performance.now();
       const url = `${this.httpManager.baseUrl}/notes/image/${encodeURIComponent(plantId)}/${encodeURIComponent(imageId)}`;
       console.log(`[NoteManager] 请求图像笔记 URL: ${url}`);
       
       try {
         const response = await fetch(url);
+        this.performanceMetrics.requestCount++;
 
         if (!response.ok) {
           console.error(`[NoteManager] 请求失败: ${response.status} ${response.statusText}`);
           
           // 提供更详细的错误信息
           if (response.status === 404) {
-            throw new Error(`图像笔记端点不存在 (404): ${url}`);
+            // 404 可能表示该图像没有笔记，返回空数组而不是抛出错误
+            const emptyResult = [];
+            this.setCache(cacheKey, emptyResult);
+            return emptyResult;
           } else if (response.status === 500) {
             throw new Error(`服务器内部错误 (500): 请检查后端服务状态`);
           } else if (response.status === 403) {
@@ -223,16 +267,18 @@ export class NoteManager {
         }
 
         const result = await response.json();
+        this.performanceMetrics.networkTime += performance.now() - startTime;
 
         if (result.success) {
           // 缓存结果
-          this.notes.set(cacheKey, result.data);
+          this.setCache(cacheKey, result.data);
           console.log(`[NoteManager] 成功获取图像 ${imageId} 的 ${result.data.length} 条笔记`);
           return result.data;
         }
 
         throw new Error(result.error || '获取图像笔记失败');
       } catch (fetchError) {
+        this.performanceMetrics.networkTime += performance.now() - startTime;
         // 网络错误处理
         if (fetchError.name === 'TypeError' && fetchError.message.includes('fetch')) {
           throw new Error(`网络连接失败: 无法连接到后端服务 (${url})`);
@@ -615,6 +661,185 @@ export class NoteManager {
   }
 
   /**
+   * 批量获取所有笔记数据 (性能优化的核心方法)
+   */
+  async getAllNotesInBulk() {
+    console.log('[NoteManager] 开始批量获取所有笔记数据...');
+    
+    await this.ensureConnection();
+    
+    // 检查批量数据缓存
+    if (this.bulkNoteData && !this.isBulkDataExpired()) {
+      console.log('[NoteManager] 使用缓存的批量笔记数据');
+      this.performanceMetrics.cacheHits++;
+      return this.bulkNoteData;
+    }
+
+    return this.httpManager.withRetry(async () => {
+      const startTime = performance.now();
+      const url = `${this.httpManager.baseUrl}/notes/bulk`;
+      console.log(`[NoteManager] 请求批量笔记数据 URL: ${url}`);
+      
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        });
+        this.performanceMetrics.bulkRequestCount++;
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            console.warn('[NoteManager] 批量笔记端点不存在，将回退到单独请求模式');
+            return null; // 表示不支持批量API
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        this.performanceMetrics.networkTime += performance.now() - startTime;
+
+        if (result.success) {
+          // 缓存批量数据
+          this.bulkNoteData = {
+            plantNotes: result.data.plantNotes || {},
+            imageNotes: result.data.imageNotes || {},
+            statistics: result.data.statistics || {}
+          };
+          this.bulkDataTimestamp = Date.now();
+          
+          // 同时更新个别缓存以保持一致性
+          this.updateIndividualCacheFromBulk();
+          
+          const plantCount = Object.keys(this.bulkNoteData.plantNotes).length;
+          const imageCount = Object.keys(this.bulkNoteData.imageNotes).length;
+          console.log(`[NoteManager] 成功获取批量笔记数据: ${plantCount} 个植物, ${imageCount} 个图像`);
+          
+          return this.bulkNoteData;
+        }
+
+        throw new Error(result.error || '获取批量笔记数据失败');
+      } catch (fetchError) {
+        this.performanceMetrics.networkTime += performance.now() - startTime;
+        
+        if (fetchError.name === 'TypeError' && fetchError.message.includes('fetch')) {
+          throw new Error(`网络连接失败: 无法连接到后端服务 (${url})`);
+        }
+        throw fetchError;
+      }
+    }, '批量获取笔记数据');
+  }
+
+  /**
+   * 检查批量数据是否过期
+   */
+  isBulkDataExpired() {
+    if (!this.bulkDataTimestamp) return true;
+    return Date.now() - this.bulkDataTimestamp > this.cacheExpiration;
+  }
+
+  /**
+   * 从批量数据更新个别缓存
+   */
+  updateIndividualCacheFromBulk() {
+    if (!this.bulkNoteData) return;
+    
+    // 更新植物笔记缓存
+    for (const [plantId, notes] of Object.entries(this.bulkNoteData.plantNotes)) {
+      const cacheKey = `plant_${plantId}`;
+      this.setCache(cacheKey, notes);
+    }
+    
+    // 更新图像笔记缓存
+    for (const [imageId, notes] of Object.entries(this.bulkNoteData.imageNotes)) {
+      // 从imageId推断plantId (格式: plantId_viewAngle_imageName)
+      const plantId = imageId.split('_')[0];
+      const cacheKey = `image_${plantId}_${imageId}`;
+      this.setCache(cacheKey, notes);
+    }
+  }
+
+  /**
+   * 获取快速笔记统计（用于Badge更新）
+   */
+  async getQuickNoteStats() {
+    console.log('[NoteManager] 获取快速笔记统计...');
+    
+    try {
+      const bulkData = await this.getAllNotesInBulk();
+      
+      if (!bulkData) {
+        console.warn('[NoteManager] 批量API不可用，回退到传统模式');
+        return null;
+      }
+      
+      const stats = {};
+      
+      // 计算每个植物的笔记总数
+      for (const [plantId, plantNotes] of Object.entries(bulkData.plantNotes)) {
+        const plantNotesCount = plantNotes.length;
+        let imageNotesCount = 0;
+        
+        // 统计该植物所有图像的笔记数
+        for (const [imageId, imageNotes] of Object.entries(bulkData.imageNotes)) {
+          if (imageId.startsWith(plantId + '_')) {
+            imageNotesCount += imageNotes.length;
+          }
+        }
+        
+        stats[plantId] = {
+          plantNotes: plantNotesCount,
+          imageNotes: imageNotesCount,
+          total: plantNotesCount + imageNotesCount
+        };
+      }
+      
+      console.log(`[NoteManager] 快速统计完成: ${Object.keys(stats).length} 个植物`);
+      return stats;
+    } catch (error) {
+      console.error('[NoteManager] 获取快速笔记统计失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 获取性能指标
+   */
+  getPerformanceMetrics() {
+    return {
+      ...this.performanceMetrics,
+      cacheSize: this.notes.size,
+      hasBulkData: !!this.bulkNoteData,
+      bulkDataAge: this.bulkDataTimestamp ? Date.now() - this.bulkDataTimestamp : null,
+      averageRequestTime: this.performanceMetrics.requestCount > 0 
+        ? this.performanceMetrics.networkTime / this.performanceMetrics.requestCount 
+        : 0
+    };
+  }
+
+  /**
+   * 重置性能指标
+   */
+  resetPerformanceMetrics() {
+    this.performanceMetrics = {
+      requestCount: 0,
+      bulkRequestCount: 0,
+      cacheHits: 0,
+      networkTime: 0
+    };
+  }
+
+  /**
+   * 强制刷新批量数据
+   */
+  async refreshBulkData() {
+    console.log('[NoteManager] 强制刷新批量数据...');
+    this.bulkNoteData = null;
+    this.bulkDataTimestamp = 0;
+    return await this.getAllNotesInBulk();
+  }
+
+  /**
    * 清理过期缓存
    */
   cleanupExpiredCache() {
@@ -631,6 +856,12 @@ export class NoteManager {
       this.notes.delete(key);
       this.cacheTimestamps.delete(key);
     });
+    
+    // 清理过期的批量数据
+    if (this.isBulkDataExpired()) {
+      this.bulkNoteData = null;
+      this.bulkDataTimestamp = 0;
+    }
     
     if (expiredKeys.length > 0) {
       console.log(`清理了 ${expiredKeys.length} 个过期缓存`);

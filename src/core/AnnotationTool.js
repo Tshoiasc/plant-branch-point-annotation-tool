@@ -305,6 +305,30 @@ export class AnnotationTool {
   }
 
   /**
+   * 清空图像和重置视图 - 用于植物切换时完全清空工作区
+   */
+  clearImage() {
+    console.log('清空图像和重置视图');
+    
+    // 清空图像相关状态
+    this.currentImage = null;
+    this.imageElement = null;
+    this.imageLoaded = false;
+    
+    // 重置视图状态
+    this.state.scale = 1;
+    this.state.translateX = 0;
+    this.state.translateY = 0;
+    
+    // 🔧 FIX: 清空标注点但不触发自动保存（防止覆盖已保存的数据）
+    this.clearKeypointsWithoutSave();
+    
+    // 更新显示
+    this.updateZoomInfo();
+    this.render(); // 现在会显示占位符而不是图像
+  }
+
+  /**
    * 渲染Canvas
    */
   render() {
@@ -1537,6 +1561,22 @@ export class AnnotationTool {
   }
 
   /**
+   * 清空所有标注点但不触发自动保存 - 用于工作区清理
+   */
+  clearKeypointsWithoutSave() {
+    if (this.keypoints.length > 0) {
+      this.keypoints = [];
+      this.saveState();
+      this.render();
+      
+      // 同步分支点预览但不保存
+      this.syncBranchPointPreview();
+      
+      console.log('Cleared all keypoints (without auto-save)');
+    }
+  }
+
+  /**
    * 重新整理标注点序号，确保序号连续
    */
   reorderKeypoints() {
@@ -2058,7 +2098,13 @@ export class AnnotationTool {
       const appState = window.PlantAnnotationTool?.appState;
       
       if (!plantDataManager || !appState?.currentPlant || !appState?.currentImage) {
-        console.warn('自动保存失败：缺少必要的上下文信息');
+        console.warn('自动保存跳过：缺少必要的上下文信息');
+        return;
+      }
+      
+      // 🔧 FIX: 检查 currentImage 的有效性，防止 null 引用错误
+      if (!appState.currentImage || !appState.currentImage.id) {
+        console.warn('自动保存跳过：当前图像信息无效');
         return;
       }
       
@@ -2072,6 +2118,20 @@ export class AnnotationTool {
       );
       
       console.log(`自动保存完成：${annotationData.keypoints.length} 个标注点已保存到图像 ${appState.currentImage.id}`);
+      
+      // 🔧 FIX: 自动保存后立即刷新缩略图状态（通过全局函数访问）
+      try {
+        // 尝试通过window对象访问全局函数
+        const refreshFunction = window.refreshThumbnailAnnotationStatus;
+        if (typeof refreshFunction === 'function') {
+          await refreshFunction(appState.currentImage.id);
+          console.log('自动保存后缩略图状态已刷新');
+        } else {
+          console.warn('refreshThumbnailAnnotationStatus 函数未找到，跳过缩略图刷新');
+        }
+      } catch (refreshError) {
+        console.warn('刷新缩略图状态失败:', refreshError);
+      }
       
     } catch (error) {
       console.error('自动保存失败:', error);

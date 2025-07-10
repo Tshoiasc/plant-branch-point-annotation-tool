@@ -634,12 +634,46 @@ function renderPlantList(plants) {
   // 更新统计显示
   updateProgressStats();
   
-  // Update note badges for all plants
-  if (window.noteUI) {
-    setTimeout(() => {
-      window.noteUI.updateAllPlantNoteBadges();
-    }, 100);
-  }
+  // CRITICAL: Update note badges immediately using pre-cached data or fast bulk request
+  const updateBadgesInstantly = async () => {
+    console.log('[Badge Update] Starting instant badge update with bulk data');
+    
+    if (window.PlantAnnotationTool?.noteManager && window.PlantAnnotationTool?.noteUI) {
+      try {
+        // First try to use pre-cached bulk data
+        let bulkData = null;
+        if (window.PlantAnnotationTool.noteManager.bulkNoteData) {
+          console.log('[Badge Update] Using pre-cached bulk data');
+          bulkData = window.PlantAnnotationTool.noteManager.bulkNoteData;
+        } else {
+          console.log('[Badge Update] No cached data, fetching bulk notes...');
+          bulkData = await window.PlantAnnotationTool.noteManager.getAllNotesInBulk();
+        }
+        
+        if (bulkData) {
+          // Update badges using bulk data - this should be instant
+          console.log('[Badge Update] Updating badges with bulk data...');
+          await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadgesFromBulk(bulkData);
+          console.log('[Badge Update] Instant badge update completed successfully');
+        } else {
+          console.log('[Badge Update] Bulk API not available, using fallback method');
+          await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
+        }
+      } catch (error) {
+        console.error('[Badge Update] Instant update failed, trying fallback:', error);
+        try {
+          await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
+        } catch (fallbackError) {
+          console.error('[Badge Update] Fallback also failed:', fallbackError);
+        }
+      }
+    } else {
+      console.warn('[Badge Update] NoteUI or NoteManager not available');
+    }
+  };
+  
+  // Start immediate update (should be instant with pre-cached data)
+  setTimeout(updateBadgesInstantly, 50);
   
   console.log(`渲染了 ${plants.length} 个植物列表项`);
 }
@@ -706,37 +740,10 @@ function createPlantListItem(plant) {
   // Click event
   item.addEventListener('click', () => handlePlantSelect(plant));
   
-  // Asynchronously load note count
-  loadPlantNoteCount(plant.id);
+  // Note: Badge updates are handled by NoteUI.updateAllPlantNoteBadges()
+  // No individual loading needed here to avoid race conditions
   
   return item;
-}
-
-/**
- * Load and display plant note count
- */
-async function loadPlantNoteCount(plantId) {
-  try {
-    // Check if note system is available
-    if (!window.PlantAnnotationTool || !window.PlantAnnotationTool.noteManager) {
-      return;
-    }
-    
-    const noteManager = window.PlantAnnotationTool.noteManager;
-    const notes = await noteManager.getPlantNotes(plantId);
-    
-    if (notes && notes.length > 0) {
-      const badge = document.getElementById(`note-badge-${plantId}`);
-      if (badge) {
-        badge.innerHTML = `<span class="note-count">📝 ${notes.length}</span>`;
-        badge.style.display = 'inline-block';
-        badge.className = 'plant-note-badge';
-      }
-    }
-  } catch (error) {
-    // Silently handle errors - note loading is not critical for UI
-    console.debug(`Note loading failed for plant ${plantId}:`, error.message);
-  }
 }
 
 /**
@@ -801,6 +808,66 @@ function getStatusText(status) {
 }
 
 /**
+ * 初始化工作区到空状态
+ */
+function initializeEmptyWorkspace() {
+  console.log('初始化空工作区状态');
+  
+  // 清空应用状态
+  appState.currentPlant = null;
+  appState.currentImage = null;
+  
+  // 清空工作区
+  clearWorkspaceState();
+  
+  // 隐藏视角选择区域
+  const viewAngleSection = document.getElementById('view-angle-section');
+  if (viewAngleSection) {
+    viewAngleSection.style.display = 'none';
+  }
+  
+  // 更新进度信息
+  updateProgressInfo('Please connect to dataset and select a plant');
+}
+
+/**
+ * 清空工作区状态
+ */
+function clearWorkspaceState() {
+  console.log('清空工作区状态');
+  
+  // 清空标注工具 - 使用新的clearImage方法完全清空图像
+  if (annotationTool) {
+    annotationTool.clearImage(); // 🔧 FIX: 使用clearImage替代resetView，防止显示残留图像
+  }
+  
+  // 🔧 FIX: 在清空工作区后再设置 currentImage 为 null（防止自动保存引用错误）
+  appState.currentImage = null;
+  
+  // 隐藏状态显示
+  hideAnnotationStatusDisplay();
+  
+  // 清空缩略图容器
+  const thumbnailContainer = document.getElementById('thumbnail-container');
+  if (thumbnailContainer) {
+    thumbnailContainer.innerHTML = '<div class="no-images">Please choose view</div>';
+  }
+  
+  // 重置视角按钮
+  const viewAngleButtons = document.querySelectorAll('.btn-view-angle');
+  viewAngleButtons.forEach(button => {
+    button.classList.remove('selected');
+    button.disabled = true;
+  });
+  
+  // 清空当前植物标题
+  const titleElement = document.getElementById('current-plant-title');
+  if (titleElement && !appState.currentPlant) {
+    titleElement.textContent = 'Plant: Please select';
+  }
+}
+
+/**
  * 处理植物选择
  */
 async function handlePlantSelect(plant) {
@@ -814,6 +881,31 @@ async function handlePlantSelect(plant) {
   }
   
   try {
+    // 🔧 FIX: 在切换植物前先保存当前图像的标注（防止标注丢失）
+    if (appState.currentImage && annotationTool) {
+      try {
+        const currentAnnotations = annotationTool.getAnnotationData();
+        if (currentAnnotations.keypoints.length > 0) {
+          console.log('植物切换前自动保存当前图像标注:', appState.currentImage.id);
+          await plantDataManager.saveImageAnnotations(
+            appState.currentImage.id,
+            currentAnnotations.keypoints
+          );
+          console.log('植物切换前标注保存成功');
+          
+          // 🔧 FIX: 植物切换前保存后立即刷新缩略图状态
+          await refreshThumbnailAnnotationStatus(appState.currentImage.id);
+          console.log('植物切换前缩略图状态已刷新');
+        }
+      } catch (error) {
+        console.warn('植物切换前自动保存标注失败:', error);
+        // 不阻断切换流程，但记录错误
+      }
+    }
+    
+    // 清空工作区状态 - 当切换植物时
+    clearWorkspaceState();
+    
     // 更新当前植物
     appState.currentPlant = plant;
     
@@ -1043,6 +1135,76 @@ async function createImageThumbnail(image, isFirst = false) {
   `;
 
   // Click event (image switching)
+
+/**
+ * 刷新缩略图标注状态 - 用于自动保存后的UI同步
+ */
+async function refreshThumbnailAnnotationStatus(imageId) {
+  console.log(`[缩略图刷新] 开始刷新图像: ${imageId}`);
+  
+  const thumbnail = document.querySelector(`[data-image-id="${imageId}"]`);
+  if (!thumbnail) {
+    console.warn(`[缩略图刷新] 找不到图像 ${imageId} 的缩略图元素`);
+    return;
+  }
+  
+  try {
+    console.log(`[缩略图刷新] 正在获取图像 ${imageId} 的标注数据...`);
+    const annotations = await plantDataManager.getImageAnnotations(imageId);
+    const hasAnnotations = annotations && annotations.length > 0;
+    const annotationCount = annotations ? annotations.length : 0;
+    
+    console.log(`[缩略图刷新] 图像 ${imageId} 标注数据: ${annotationCount} 个标注点`);
+    
+    // 更新缩略图类
+    if (hasAnnotations) {
+      thumbnail.classList.add('has-annotations');
+      console.log(`[缩略图刷新] 添加了 has-annotations 类`);
+    } else {
+      thumbnail.classList.remove('has-annotations');
+      console.log(`[缩略图刷新] 移除了 has-annotations 类`);
+    }
+    
+    // 更新标注徽章
+    let annotationBadge = thumbnail.querySelector('.annotation-badge');
+    if (hasAnnotations) {
+      if (!annotationBadge) {
+        annotationBadge = document.createElement('div');
+        annotationBadge.className = 'annotation-badge';
+        thumbnail.querySelector('.thumbnail-image').appendChild(annotationBadge);
+        console.log(`[缩略图刷新] 创建了新的标注徽章`);
+      }
+      annotationBadge.textContent = annotationCount;
+      console.log(`[缩略图刷新] 更新徽章数量: ${annotationCount}`);
+    } else if (annotationBadge) {
+      annotationBadge.remove();
+      console.log(`[缩略图刷新] 移除了标注徽章`);
+    }
+    
+    // 更新标注状态文本
+    let statusElement = thumbnail.querySelector('.annotation-status');
+    if (hasAnnotations) {
+      if (!statusElement) {
+        statusElement = document.createElement('div');
+        statusElement.className = 'annotation-status';
+        statusElement.textContent = '✓ Annotated';
+        thumbnail.querySelector('.thumbnail-info').appendChild(statusElement);
+        console.log(`[缩略图刷新] 创建了 '✓ Annotated' 状态`);
+      }
+    } else if (statusElement) {
+      statusElement.remove();
+      console.log(`[缩略图刷新] 移除了 '✓ Annotated' 状态`);
+    }
+    
+    console.log(`[缩略图刷新] 完成刷新图像 ${imageId}`);
+    
+  } catch (error) {
+    console.error(`[缩略图刷新] 刷新失败:`, error);
+  }
+}
+
+// 🔧 FIX: 将刷新函数暴露到全局，供AnnotationTool调用
+window.refreshThumbnailAnnotationStatus = refreshThumbnailAnnotationStatus;
   thumbnail.addEventListener('click', () => handleImageSelect(image, true));
 
   // Async load image
@@ -1113,11 +1275,20 @@ async function handleImageSelect(image, isImageSwitch = true) {
             currentAnnotations.keypoints
           );
           console.log('自动保存了当前图像的标注');
+          
+          // 🔧 FIX: 自动保存后立即刷新缩略图状态
+          await refreshThumbnailAnnotationStatus(appState.currentImage.id);
+          console.log('自动保存后缩略图状态已刷新');
         }
       } catch (error) {
         console.warn('自动保存当前标注失败:', error);
       }
     }
+    
+    // 检测是否为该植物的首张图像加载
+    const isFirstImageForPlant = !appState.currentImage || 
+                                (appState.currentPlant && appState.currentImage && 
+                                 !appState.currentImage.id.startsWith(appState.currentPlant.id));
     
     // 更新应用状态
     appState.currentImage = image;
@@ -1140,27 +1311,32 @@ async function handleImageSelect(image, isImageSwitch = true) {
       // 强制刷新Canvas尺寸，确保正确计算
       annotationTool.resizeCanvas();
 
-      // 判断是否是图片切换（而不是首次加载）
-      const isActualImageSwitch = annotationTool.imageLoaded && appState.currentImage;
-
       // 获取锁定倍数设置和自动切换设置
       const zoomSettings = getZoomLockSettings();
       const autoMoveSettings = getAutoMoveSettings();
 
-      // 图片切换时始终保持视图状态，首次加载时重置
-      const shouldPreserveView = isImageSwitch;
-      console.log(`[调试] isImageSwitch: ${isImageSwitch}, shouldPreserveView: ${shouldPreserveView}`);
+      // 决定是否保持视图状态：只有在非首张图像且是图像切换时才保持
+      const shouldPreserveView = isImageSwitch && !isFirstImageForPlant;
+      console.log(`[调试] isImageSwitch: ${isImageSwitch}, isFirstImageForPlant: ${isFirstImageForPlant}, shouldPreserveView: ${shouldPreserveView}`);
+      
       await annotationTool.loadImage(image, shouldPreserveView);
 
-      // 应用锁定倍数设置
-      if (isImageSwitch && zoomSettings.isLocked) {
+      // 应用锁定倍数设置或确保首张图像适合屏幕
+      if (isFirstImageForPlant) {
+        // 首张图像始终适合屏幕
+        console.log('首张图像：重置视图到适合屏幕');
+        setTimeout(() => {
+          annotationTool.fitToScreen();
+        }, 100); // 短暂延迟确保图像加载完成
+      } else if (isImageSwitch && zoomSettings.isLocked) {
         // 图片切换且启用了锁定倍数
         annotationTool.setZoom(zoomSettings.lockValue);
         console.log(`图片切换：应用锁定倍数 ${zoomSettings.lockValue}x`);
       } else if (isImageSwitch) {
         console.log('图片切换：保持当前缩放和视图状态');
       } else {
-        console.log('首次加载：重置视图到适合屏幕');
+        console.log('其他情况：重置视图到适合屏幕');
+        annotationTool.fitToScreen();
       }
       
       // 加载已有的标注数据
@@ -1454,6 +1630,26 @@ async function performSaveAnnotation(isManualAdjustment) {
     }
     
     console.log('标注数据已保存到持久化存储');
+    
+    // 🔧 FIX: 立即刷新当前图像的缩略图标注状态
+    if (appState.currentImage) {
+      await refreshThumbnailAnnotationStatus(appState.currentImage.id);
+      console.log('缩略图标注状态已刷新');
+    }
+    
+    // 🔧 FIX: 如果是传播保存，刷新所有受影响的缩略图
+    if (!isManualAdjustment && saveResult.affectedImages && saveResult.affectedImages.length > 0) {
+      console.log(`刷新 ${saveResult.affectedImages.length} 个受影响图像的缩略图状态`);
+      for (const imageId of saveResult.affectedImages) {
+        await refreshThumbnailAnnotationStatus(imageId);
+      }
+    }
+    
+    // 🔧 FIX: 刷新植物笔记徽章（标注可能影响笔记统计）
+    if (window.PlantAnnotationTool?.noteUI && appState.currentPlant) {
+      await window.PlantAnnotationTool.noteUI.updatePlantNoteBadge(appState.currentPlant.id);
+      console.log('植物笔记徽章已刷新');
+    }
     
     // 隐藏模态框
     hideSaveAnnotationModal();
@@ -1808,8 +2004,8 @@ function handlePlantUpdated(event) {
     const viewAnglesElement = plantItem.querySelector('.view-angles');
     if (viewAnglesElement) {
       const viewAnglesText = plant.viewAngles.length > 0 ? 
-        `视角: ${plant.viewAngles.join(', ')}` :
-        '视角: 检测中...';
+        `view: ${plant.viewAngles.join(', ')}` :
+        'view: detecting...';
       viewAnglesElement.textContent = viewAnglesText;
     }
     
@@ -3162,18 +3358,8 @@ async function confirmSkipPlant() {
 
       // 如果当前选中的是被跳过的植株，清除选择
       if (appState.currentPlant?.id === plantId) {
-        appState.currentPlant = null;
-        updateCurrentPlantTitle({ id: '请选择植株' });
-        // 清空缩略图容器
-        const thumbnailContainer = document.getElementById('thumbnail-container');
-        if (thumbnailContainer) {
-          thumbnailContainer.innerHTML = '<div class="no-images">请选择植株</div>';
-        }
-
-        // 清空标注画布
-        if (annotationTool) {
-          annotationTool.clearKeypoints();
-        }
+        console.log('当前植株被跳过，初始化空工作区');
+        initializeEmptyWorkspace();
       }
     }
 
@@ -3405,7 +3591,29 @@ async function autoConnectDataset() {
       plantCount: plants.length
     };
     
-    updateFullscreenLoading(100, 'Dataset loaded successfully!', `Successfully loaded ${plants.length} plants`);
+    updateFullscreenLoading(100, 'Loading notes data...', 'Pre-loading all notes for instant badge updates');
+    
+    // Pre-load all notes data during initialization for instant badge updates
+    let notesLoaded = false;
+    try {
+      if (window.PlantAnnotationTool?.noteManager) {
+        console.log('[初始化] 开始预加载笔记数据...');
+        const bulkNotes = await window.PlantAnnotationTool.noteManager.getAllNotesInBulk();
+        if (bulkNotes) {
+          console.log('[初始化] 笔记数据预加载成功');
+          notesLoaded = true;
+        } else {
+          console.log('[初始化] 批量API不可用，跳过预加载');
+        }
+      }
+    } catch (error) {
+      console.warn('[初始化] 笔记预加载失败，将使用懒加载模式:', error.message);
+    }
+    
+    const finalMessage = notesLoaded ? 
+      'Ready! All data and notes loaded successfully.' : 
+      'Ready! Dataset loaded successfully.';
+    updateFullscreenLoading(100, 'Initialization complete!', finalMessage);
     
     // 短暂显示成功状态
     setTimeout(() => {
@@ -3418,9 +3626,12 @@ async function autoConnectDataset() {
       updateProgressStats();
       
       // 更新进度信息
-      updateProgressInfo(`Loaded ${plants.length} plants`);
+      const statusMsg = notesLoaded ? 
+        `Loaded ${plants.length} plants with pre-cached notes` :
+        `Loaded ${plants.length} plants`;
+      updateProgressInfo(statusMsg);
       
-      console.log(`成功自动加载数据集: ${plants.length} 个植物`);
+      console.log(`成功自动加载数据集: ${plants.length} 个植物${notesLoaded ? ' (包含预缓存笔记)' : ''}`);
     }, 1000);
     
   } catch (error) {

@@ -819,6 +819,109 @@ app.delete('/api/notes/:noteId', async (req, res) => {
   }
 });
 
+// 批量获取所有笔记 - PERFORMANCE OPTIMIZATION ENDPOINT
+app.get('/api/notes/bulk', async (req, res) => {
+  try {
+    console.log('[Bulk API] Starting bulk notes request...');
+    const startTime = Date.now();
+    
+    const annotationsDir = await ensureAnnotationsDirectory();
+    const files = await fs.readdir(annotationsDir);
+    const noteFiles = files.filter(file => file.startsWith('note_') && file.endsWith('.json'));
+    
+    const plantNotes = {};
+    const imageNotes = {};
+    let totalPlantNotes = 0;
+    let totalImageNotes = 0;
+    
+    console.log(`[Bulk API] Found ${noteFiles.length} note files to process`);
+    
+    // Process all note files in parallel for maximum performance
+    const notePromises = noteFiles.map(async (file) => {
+      try {
+        const filePath = path.join(annotationsDir, file);
+        const content = await fs.readFile(filePath, 'utf8');
+        const note = JSON.parse(content);
+        
+        return note;
+      } catch (error) {
+        console.warn(`[Bulk API] 读取笔记文件 ${file} 失败:`, error.message);
+        return null;
+      }
+    });
+    
+    const allNotes = (await Promise.all(notePromises)).filter(note => note !== null);
+    console.log(`[Bulk API] Successfully loaded ${allNotes.length} notes`);
+    
+    // Group notes by plant and image
+    for (const note of allNotes) {
+      if (note.imageId) {
+        // Image note
+        if (!imageNotes[note.imageId]) {
+          imageNotes[note.imageId] = [];
+        }
+        imageNotes[note.imageId].push(note);
+        totalImageNotes++;
+      } else {
+        // Plant note
+        if (!plantNotes[note.plantId]) {
+          plantNotes[note.plantId] = [];
+        }
+        plantNotes[note.plantId].push(note);
+        totalPlantNotes++;
+      }
+    }
+    
+    // Sort notes by timestamp (newest first) for each plant/image
+    Object.values(plantNotes).forEach(notes => {
+      notes.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    });
+    
+    Object.values(imageNotes).forEach(notes => {
+      notes.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    });
+    
+    const endTime = Date.now();
+    const processingTime = endTime - startTime;
+    
+    console.log(`[Bulk API] Bulk processing completed in ${processingTime}ms`);
+    console.log(`[Bulk API] Plant notes: ${Object.keys(plantNotes).length} plants with ${totalPlantNotes} notes`);
+    console.log(`[Bulk API] Image notes: ${Object.keys(imageNotes).length} images with ${totalImageNotes} notes`);
+    
+    res.json({
+      success: true,
+      data: {
+        plantNotes,
+        imageNotes,
+        statistics: {
+          totalPlantNotes,
+          totalImageNotes,
+          totalNotes: totalPlantNotes + totalImageNotes,
+          plantsWithNotes: Object.keys(plantNotes).length,
+          imagesWithNotes: Object.keys(imageNotes).length,
+          processingTimeMs: processingTime
+        }
+      },
+      timestamp: new Date().toISOString(),
+      message: `批量获取 ${totalPlantNotes + totalImageNotes} 条笔记成功 (${processingTime}ms)`
+    });
+    
+  } catch (error) {
+    console.error('[Bulk API] Bulk notes request failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      fallback: {
+        message: "Use individual note endpoints",
+        endpoints: [
+          "/api/notes/plant/{plantId}",
+          "/api/notes/image/{plantId}/{imageId}"
+        ]
+      }
+    });
+  }
+});
+
 // 获取单个笔记
 app.get('/api/notes/:noteId', async (req, res) => {
   try {
@@ -913,6 +1016,7 @@ app.get('/api/notes/search', async (req, res) => {
   }
 });
 
+
 // 获取所有笔记统计
 app.get('/api/notes/stats', async (req, res) => {
   try {
@@ -980,6 +1084,15 @@ app.get('/api/notes/stats', async (req, res) => {
       error: error.message
     });
   }
+});
+
+// 测试笔记路由注册
+app.get('/api/notes/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Note routes are working',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // 健康检查

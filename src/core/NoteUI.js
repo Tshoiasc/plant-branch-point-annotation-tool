@@ -35,6 +35,12 @@ export class NoteUI {
       setTimeout(() => {
         this.updateAllPlantNoteBadges();
       }, 500);
+      
+      // ADDITIONAL SAFETY: Update badges again after a longer delay to catch any timing issues
+      setTimeout(() => {
+        console.log('[NoteUI] Running additional badge update for safety');
+        this.updateAllPlantNoteBadges();
+      }, 2000);
     }, 200);
   }
 
@@ -685,13 +691,33 @@ export class NoteUI {
    */
   async showImageNotes() {
     console.log('[NoteUI] showImageNotes called');
-    if (!this.currentPlantId || !this.currentImageId) {
+    console.log(`[NoteUI] Current state - plantId: ${this.currentPlantId}, imageId: ${this.currentImageId}`);
+    
+    // Also check the global app state as a fallback
+    const globalAppState = window.PlantAnnotationTool?.appState;
+    const fallbackPlantId = globalAppState?.currentPlant?.id;
+    const fallbackImageId = globalAppState?.currentImage?.id;
+    
+    console.log(`[NoteUI] Fallback state - plantId: ${fallbackPlantId}, imageId: ${fallbackImageId}`);
+    
+    const effectivePlantId = this.currentPlantId || fallbackPlantId;
+    const effectiveImageId = this.currentImageId || fallbackImageId;
+    
+    if (!effectivePlantId || !effectiveImageId) {
       console.warn('[NoteUI] No plant or image selected, cannot show image notes');
       this.showUserError('Please select plant and image', 'You need to select both plant and image to view image notes');
       return;
     }
+    
+    // Update current state if we used fallback values
+    if (!this.currentPlantId && fallbackPlantId) {
+      this.currentPlantId = fallbackPlantId;
+    }
+    if (!this.currentImageId && fallbackImageId) {
+      this.currentImageId = fallbackImageId;
+    }
 
-    document.getElementById('note-list-modal-title').textContent = `Image Notes - ${this.currentImageId}`;
+    document.getElementById('note-list-modal-title').textContent = `Image Notes - ${effectiveImageId}`;
     
     const modal = document.getElementById('note-list-modal');
     if (modal) {
@@ -891,9 +917,25 @@ export class NoteUI {
         await this.loadNoteList();
       }
 
-      // Update plant note badge
+      // 🔧 FIX: 立即刷新植物笔记徽章和图像笔记徽章
       if (this.currentPlantId) {
+        console.log('[NoteUI] 笔记保存完成，立即刷新徽章...');
+        
+        // 立即刷新植物笔记徽章
         await this.updatePlantNoteBadge(this.currentPlantId);
+        
+        // 如果是图像笔记，也刷新图像笔记徽章
+        if (this.currentImageId) {
+          // 调用全局函数刷新图像笔记计数
+          if (typeof loadImageNoteCount === 'function') {
+            await loadImageNoteCount(this.currentPlantId, this.currentImageId);
+            console.log('[NoteUI] 图像笔记徽章已刷新');
+          } else {
+            console.warn('[NoteUI] loadImageNoteCount function not available');
+          }
+        }
+        
+        console.log('[NoteUI] 笔记徽章刷新完成');
       }
 
     } catch (error) {
@@ -933,9 +975,20 @@ export class NoteUI {
       // Refresh note list
       await this.loadNoteList();
       
-      // Update plant note badge
+      // 🔧 FIX: 删除笔记后立即刷新所有相关徽章
       if (this.currentPlantId) {
+        console.log('[NoteUI] 笔记删除完成，立即刷新徽章...');
+        
+        // 立即刷新植物笔记徽章
         await this.updatePlantNoteBadge(this.currentPlantId);
+        
+        // 如果有当前图像，也刷新图像笔记徽章
+        if (this.currentImageId && typeof loadImageNoteCount === 'function') {
+          await loadImageNoteCount(this.currentPlantId, this.currentImageId);
+          console.log('[NoteUI] 图像笔记徽章已刷新');
+        }
+        
+        console.log('[NoteUI] 删除后徽章刷新完成');
       }
     } catch (error) {
       console.error('Delete note failed:', error);
@@ -1007,7 +1060,7 @@ export class NoteUI {
     // Auto load and display plant notes
     if (plantId) {
       this.loadAndDisplayPlantNotes(plantId);
-      // Update plant note badge
+      // Update plant note badge - should always be visible when notes exist
       this.updatePlantNoteBadge(plantId);
     } else {
       this.hideNoteDisplay('plant-note-display');
@@ -1020,6 +1073,12 @@ export class NoteUI {
   setCurrentImage(imageId) {
     console.log(`[NoteUI] Setting current image ID: ${imageId}, current plant ID: ${this.currentPlantId}`);
     this.currentImageId = imageId;
+    
+    // Ensure we have the current plant ID as well
+    if (!this.currentPlantId && window.PlantAnnotationTool?.appState?.currentPlant?.id) {
+      this.currentPlantId = window.PlantAnnotationTool.appState.currentPlant.id;
+      console.log(`[NoteUI] Auto-updated plant ID from global state: ${this.currentPlantId}`);
+    }
     
     // Show image notes button and container
     const imageNoteBtn = document.getElementById('image-note-btn');
@@ -1053,40 +1112,125 @@ export class NoteUI {
   async updatePlantNoteBadge(plantId) {
     if (!plantId) return;
     
+    console.log(`[NoteUI] updatePlantNoteBadge called for plant: ${plantId}`);
+    
     try {
-      // Get both plant notes and image notes for this plant
+      // Use bulk note stats for better performance
+      const bulkStats = await this.noteManager.getQuickNoteStats();
+      
+      if (bulkStats && bulkStats[plantId]) {
+        const stats = bulkStats[plantId];
+        const totalNotes = stats.total;
+        
+        console.log(`[NoteUI] Plant ${plantId} bulk stats: ${stats.plantNotes} plant + ${stats.imageNotes} image = ${totalNotes} total`);
+        
+        const badge = document.getElementById(`note-badge-${plantId}`);
+        console.log(`[NoteUI] Badge element found for ${plantId}:`, !!badge);
+        
+        if (badge) {
+          if (totalNotes > 0) {
+            badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
+            badge.style.display = 'inline-flex';
+            badge.style.visibility = 'visible';
+            badge.style.opacity = '1';
+            badge.title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+            console.log(`[NoteUI] Badge updated for ${plantId}: showing ${totalNotes} notes (BULK)`);
+          } else {
+            badge.style.display = 'none';
+            badge.style.visibility = 'hidden';
+            badge.style.opacity = '0';
+            console.log(`[NoteUI] Badge hidden for ${plantId}: no notes found (BULK)`);
+          }
+        } else {
+          console.error(`[NoteUI] Badge element not found for plant ${plantId}`);
+        }
+        return; // Exit early if bulk data is available
+      }
+      
+      console.log(`[NoteUI] Bulk stats not available for ${plantId}, falling back to individual requests`);
+      
+      // Fallback to individual requests if bulk API is not available
       const plantNotes = await this.noteManager.getPlantNotes(plantId);
-      const plantImages = await window.fileManager.readPlantImages(plantId);
+      console.log(`[NoteUI] Plant ${plantId} has ${plantNotes?.length || 0} plant notes`);
       
       let totalImageNotes = 0;
       
-      // Count notes for all images of this plant
-      if (plantImages) {
-        for (const viewAngle in plantImages) {
-          for (const image of plantImages[viewAngle]) {
-            try {
-              const imageNotes = await this.noteManager.getImageNotes(plantId, image.id);
-              if (imageNotes && imageNotes.length > 0) {
-                totalImageNotes += imageNotes.length;
+      // Get plant images using the correct API
+      let plantImages = null;
+      if (window.PlantAnnotationTool?.plantDataManager) {
+        try {
+          plantImages = await window.PlantAnnotationTool.plantDataManager.getPlantImages(plantId);
+        } catch (error) {
+          console.debug(`Could not load plant images for ${plantId}:`, error.message);
+          // Fallback: try to get images by view angles if available
+          const plant = window.PlantAnnotationTool.plantDataManager.plants?.find(p => p.id === plantId);
+          if (plant?.viewAngles) {
+            const imagesByView = {};
+            for (const viewAngle of plant.viewAngles) {
+              try {
+                const images = await window.PlantAnnotationTool.plantDataManager.getPlantImages(plantId, viewAngle);
+                if (images && images.length > 0) {
+                  imagesByView[viewAngle] = images;
+                }
+              } catch (viewError) {
+                console.debug(`Could not load images for ${plantId}/${viewAngle}:`, viewError.message);
               }
-            } catch (error) {
-              // Ignore errors for individual images
             }
+            plantImages = imagesByView;
           }
         }
       }
       
+      // Count notes for all images of this plant
+      if (plantImages) {
+        const imagePromises = [];
+        
+        if (Array.isArray(plantImages)) {
+          // Single view angle array
+          for (const image of plantImages) {
+            imagePromises.push(this.noteManager.getImageNotes(plantId, image.id));
+          }
+        } else {
+          // Multi-view angle object
+          for (const viewAngle in plantImages) {
+            for (const image of plantImages[viewAngle]) {
+              imagePromises.push(this.noteManager.getImageNotes(plantId, image.id));
+            }
+          }
+        }
+        
+        // Get all image notes in parallel with proper error handling
+        const imageNotesResults = await Promise.allSettled(imagePromises);
+        totalImageNotes = imageNotesResults.reduce((total, result) => {
+          if (result.status === 'fulfilled' && result.value && result.value.length > 0) {
+            return total + result.value.length;
+          }
+          return total;
+        }, 0);
+      }
+      
       const totalNotes = (plantNotes?.length || 0) + totalImageNotes;
+      console.log(`[NoteUI] Plant ${plantId} total notes: ${totalNotes} (${plantNotes?.length || 0} plant + ${totalImageNotes} image)`);
+      
       const badge = document.getElementById(`note-badge-${plantId}`);
+      console.log(`[NoteUI] Badge element found for ${plantId}:`, !!badge);
       
       if (badge) {
         if (totalNotes > 0) {
           badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
-          badge.style.display = 'flex';
+          badge.style.display = 'inline-flex';
+          badge.style.visibility = 'visible';
+          badge.style.opacity = '1';
           badge.title = `${plantNotes?.length || 0} plant notes, ${totalImageNotes} image notes`;
+          console.log(`[NoteUI] Badge updated for ${plantId}: showing ${totalNotes} notes`);
         } else {
           badge.style.display = 'none';
+          badge.style.visibility = 'hidden';
+          badge.style.opacity = '0';
+          console.log(`[NoteUI] Badge hidden for ${plantId}: no notes found`);
         }
+      } else {
+        console.error(`[NoteUI] Badge element not found for plant ${plantId}`);
       }
     } catch (error) {
       console.error(`Failed to update note badge for plant ${plantId}:`, error);
@@ -1094,16 +1238,146 @@ export class NoteUI {
   }
 
   /**
-   * Update all plant note badges
+   * Update all plant note badges using bulk data (INSTANT - no individual requests)
+   */
+  async updateAllPlantNoteBadgesFromBulk(bulkData) {
+    console.log('[NoteUI] updateAllPlantNoteBadgesFromBulk() called with bulk data');
+    const plantItems = document.querySelectorAll('.plant-item');
+    console.log(`[NoteUI] Found ${plantItems.length} plant items to update`);
+    
+    if (!bulkData || !bulkData.plantNotes || !bulkData.imageNotes) {
+      console.error('[NoteUI] Invalid bulk data provided');
+      return;
+    }
+    
+    const startTime = performance.now();
+    
+    // Create quick stats lookup from bulk data
+    const quickStats = {};
+    
+    // Process plant notes
+    for (const [plantId, notes] of Object.entries(bulkData.plantNotes)) {
+      if (!quickStats[plantId]) {
+        quickStats[plantId] = { plantNotes: 0, imageNotes: 0, total: 0 };
+      }
+      quickStats[plantId].plantNotes = notes.length;
+      quickStats[plantId].total += notes.length;
+    }
+    
+    // Process image notes (group by plant)
+    for (const [imageId, notes] of Object.entries(bulkData.imageNotes)) {
+      // Extract plant ID from image ID (format: BR017-028111_sv-000_...)
+      const plantId = imageId.split('_')[0];
+      if (plantId) {
+        if (!quickStats[plantId]) {
+          quickStats[plantId] = { plantNotes: 0, imageNotes: 0, total: 0 };
+        }
+        quickStats[plantId].imageNotes += notes.length;
+        quickStats[plantId].total += notes.length;
+      }
+    }
+    
+    console.log(`[NoteUI] Generated quick stats for ${Object.keys(quickStats).length} plants`);
+    
+    // Update all badges instantly using pre-calculated stats
+    for (const item of plantItems) {
+      const plantId = item.dataset.plantId;
+      if (plantId && quickStats[plantId]) {
+        const stats = quickStats[plantId];
+        const totalNotes = stats.total;
+        
+        const badge = document.getElementById(`note-badge-${plantId}`);
+        if (badge) {
+          if (totalNotes > 0) {
+            badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
+            badge.style.display = 'inline-flex';
+            badge.style.visibility = 'visible';
+            badge.style.opacity = '1';
+            badge.title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+          } else {
+            badge.style.display = 'none';
+            badge.style.visibility = 'hidden';
+            badge.style.opacity = '0';
+          }
+        }
+      }
+    }
+    
+    const endTime = performance.now();
+    console.log(`[NoteUI] BULK UPDATE COMPLETE: ${plantItems.length} badges updated in ${(endTime - startTime).toFixed(2)}ms using bulk data`);
+    console.log(`[NoteUI] Performance: INSTANT UPDATE - no individual HTTP requests`);
+  }
+
+  /**
+   * Update all plant note badges (OPTIMIZED with bulk API)
    */
   async updateAllPlantNoteBadges() {
+    console.log('[NoteUI] updateAllPlantNoteBadges() called');
     const plantItems = document.querySelectorAll('.plant-item');
+    console.log(`[NoteUI] Found ${plantItems.length} plant items to update`);
+    
+    const startTime = performance.now();
+    
+    try {
+      // Try bulk API first for maximum performance
+      const bulkStats = await this.noteManager.getQuickNoteStats();
+      
+      if (bulkStats) {
+        console.log('[NoteUI] Using bulk note stats for optimal performance');
+        
+        // Update all badges using bulk data in a single pass
+        for (const item of plantItems) {
+          const plantId = item.dataset.plantId;
+          if (plantId && bulkStats[plantId]) {
+            const stats = bulkStats[plantId];
+            const totalNotes = stats.total;
+            
+            const badge = document.getElementById(`note-badge-${plantId}`);
+            if (badge) {
+              if (totalNotes > 0) {
+                badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
+                badge.style.display = 'inline-flex';
+                badge.style.visibility = 'visible';
+                badge.style.opacity = '1';
+                badge.title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+              } else {
+                badge.style.display = 'none';
+                badge.style.visibility = 'hidden';
+                badge.style.opacity = '0';
+              }
+            }
+          }
+        }
+        
+        const endTime = performance.now();
+        const metrics = this.noteManager.getPerformanceMetrics();
+        console.log(`[NoteUI] BULK UPDATE COMPLETE: ${plantItems.length} badges updated in ${(endTime - startTime).toFixed(2)}ms`);
+        console.log(`[NoteUI] Performance: ${metrics.bulkRequestCount} bulk requests, ${metrics.cacheHits} cache hits`);
+        
+        return; // Exit early with optimal performance
+      }
+      
+      console.log('[NoteUI] Bulk API not available, falling back to individual requests');
+    } catch (error) {
+      console.error('[NoteUI] Bulk badge update failed, falling back to individual requests:', error);
+    }
+    
+    // Fallback to individual updates if bulk API fails
+    console.log('[NoteUI] Using individual badge updates (slower)');
     for (const item of plantItems) {
       const plantId = item.dataset.plantId;
       if (plantId) {
+        console.log(`[NoteUI] Updating badge for plant: ${plantId}`);
         await this.updatePlantNoteBadge(plantId);
+      } else {
+        console.warn('[NoteUI] Plant item found without plantId dataset');
       }
     }
+    
+    const endTime = performance.now();
+    const metrics = this.noteManager.getPerformanceMetrics();
+    console.log(`[NoteUI] INDIVIDUAL UPDATE COMPLETE: ${plantItems.length} badges updated in ${(endTime - startTime).toFixed(2)}ms`);
+    console.log(`[NoteUI] Performance: ${metrics.requestCount} individual requests, ${metrics.cacheHits} cache hits`);
   }
 
   /**
