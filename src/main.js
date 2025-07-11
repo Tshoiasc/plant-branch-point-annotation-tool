@@ -634,46 +634,76 @@ function renderPlantList(plants) {
   // 更新统计显示
   updateProgressStats();
   
-  // CRITICAL: Update note badges immediately using pre-cached data or fast bulk request
+  // 🔧 OPTIMIZED: Auto-load note badges immediately upon plant list render
   const updateBadgesInstantly = async () => {
-    console.log('[Badge Update] Starting instant badge update with bulk data');
+    console.log('[Badge Update] Starting automatic badge loading for all plants');
     
-    if (window.PlantAnnotationTool?.noteManager && window.PlantAnnotationTool?.noteUI) {
-      try {
-        // First try to use pre-cached bulk data
-        let bulkData = null;
-        if (window.PlantAnnotationTool.noteManager.bulkNoteData) {
-          console.log('[Badge Update] Using pre-cached bulk data');
-          bulkData = window.PlantAnnotationTool.noteManager.bulkNoteData;
-        } else {
-          console.log('[Badge Update] No cached data, fetching bulk notes...');
-          bulkData = await window.PlantAnnotationTool.noteManager.getAllNotesInBulk();
-        }
-        
-        if (bulkData) {
-          // Update badges using bulk data - this should be instant
-          console.log('[Badge Update] Updating badges with bulk data...');
-          await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadgesFromBulk(bulkData);
-          console.log('[Badge Update] Instant badge update completed successfully');
-        } else {
-          console.log('[Badge Update] Bulk API not available, using fallback method');
-          await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
-        }
-      } catch (error) {
-        console.error('[Badge Update] Instant update failed, trying fallback:', error);
+    // Wait for note system with more aggressive retry for better UX
+    let retryCount = 0;
+    const maxRetries = 15; // Increased retries
+    const retryDelay = 300; // Reduced delay for faster startup
+    
+    while (retryCount < maxRetries) {
+      if (window.PlantAnnotationTool?.noteManager && window.PlantAnnotationTool?.noteUI) {
         try {
-          await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
-        } catch (fallbackError) {
-          console.error('[Badge Update] Fallback also failed:', fallbackError);
+          console.log('[Badge Update] Note system available, starting bulk badge update');
+          const startTime = performance.now();
+          
+          // Try to use pre-cached bulk data first (fastest option)
+          let bulkData = window.PlantAnnotationTool.noteManager.bulkNoteData;
+          
+          if (!bulkData) {
+            console.log('[Badge Update] No pre-cached data, fetching bulk notes for instant display...');
+            try {
+              bulkData = await window.PlantAnnotationTool.noteManager.getAllNotesInBulk();
+              console.log('[Badge Update] Bulk data fetched successfully');
+            } catch (bulkError) {
+              console.warn('[Badge Update] Bulk API failed, using optimized individual requests:', bulkError.message);
+              // Fall back to individual badge updates but with optimized approach
+              await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
+              const endTime = performance.now();
+              console.log(`[Badge Update] Individual badge update completed in ${(endTime - startTime).toFixed(2)}ms`);
+              return;
+            }
+          }
+          
+          if (bulkData) {
+            // Use instant bulk badge update
+            await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadgesFromBulk(bulkData);
+            const endTime = performance.now();
+            console.log(`[Badge Update] INSTANT bulk badge update completed in ${(endTime - startTime).toFixed(2)}ms`);
+            console.log('[Badge Update] ✅ All plant note badges are now visible immediately');
+          } else {
+            // Ultimate fallback to individual updates
+            console.log('[Badge Update] Using fallback individual badge updates');
+            await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
+            const endTime = performance.now();
+            console.log(`[Badge Update] Fallback badge update completed in ${(endTime - startTime).toFixed(2)}ms`);
+          }
+          
+          return; // Success, exit retry loop
+        } catch (error) {
+          console.error('[Badge Update] Badge update failed:', error);
+          retryCount++;
+          if (retryCount >= maxRetries) {
+            console.error('[Badge Update] Max retries reached, badge update failed permanently');
+            return;
+          }
         }
+      } else {
+        console.log(`[Badge Update] Note system not ready, retry ${retryCount + 1}/${maxRetries}`);
+        retryCount++;
       }
-    } else {
-      console.warn('[Badge Update] NoteUI or NoteManager not available');
+      
+      // Wait before next retry
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
+    
+    console.warn('[Badge Update] ❌ Note system initialization timeout, badges will load later');
   };
   
-  // Start immediate update (should be instant with pre-cached data)
-  setTimeout(updateBadgesInstantly, 50);
+  // Start badge update immediately, but don't block plant list rendering
+  setTimeout(updateBadgesInstantly, 100);
   
   console.log(`渲染了 ${plants.length} 个植物列表项`);
 }
@@ -2664,7 +2694,7 @@ function generateViewAnglesHTML(plantId, plantData) {
           <div>
             <span style="font-weight: 500; color: #374151;">📷 ${viewAngle}</span>
             <span style="color: #6b7280; margin-left: 10px;">
-              ${images.length} 张图像 • ${totalKeypoints} 个标注点
+              ${images.length} images • ${totalKeypoints} annotations
             </span>
           </div>
           <span class="preview-toggle" style="color: #6b7280;">▶</span>

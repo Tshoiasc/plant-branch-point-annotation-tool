@@ -669,7 +669,10 @@ export class NoteUI {
       return;
     }
 
+    // 🔧 FIX: 确保在显示植物笔记时清除图像ID，防止误创建图像笔记
     this.currentImageId = null;
+    console.log('[NoteUI] Cleared currentImageId to ensure plant notes creation');
+    
     document.getElementById('note-list-modal-title').textContent = `Plant Notes - ${this.currentPlantId}`;
     
     const modal = document.getElementById('note-list-modal');
@@ -911,10 +914,12 @@ export class NoteUI {
 
       this.closeNoteModal();
       
-      // Refresh note list
+      // 🔧 FIX: Immediately refresh the note list modal if it's open to show new note
       const listModal = document.getElementById('note-list-modal');
-      if (listModal.style.display === 'flex') {
+      if (listModal && listModal.style.display === 'flex') {
+        console.log('[NoteUI] Modal is open, refreshing note list to show new note');
         await this.loadNoteList();
+        console.log('[NoteUI] Note list refreshed in modal');
       }
 
       // 🔧 FIX: 立即刷新植物笔记徽章和图像笔记徽章
@@ -972,23 +977,33 @@ export class NoteUI {
       await this.noteManager.deleteNote(noteId);
       console.log('Note deleted successfully');
       
-      // Refresh note list
-      await this.loadNoteList();
+      // 🔧 FIX: Force immediate cache clear and refresh for deletion
+      console.log('[NoteUI] Note deleted, forcing cache clear and refresh...');
       
-      // 🔧 FIX: 删除笔记后立即刷新所有相关徽章
+      // Force clear cache to ensure fresh data
+      if (this.noteManager.clearCache) {
+        this.noteManager.clearCache();
+        console.log('[NoteUI] Note manager cache cleared');
+      }
+      
+      // Immediately refresh note list in modal
+      await this.loadNoteList();
+      console.log('[NoteUI] Note list refreshed after deletion');
+      
+      // 🔧 FIX: Immediately refresh all related badges after deletion
       if (this.currentPlantId) {
-        console.log('[NoteUI] 笔记删除完成，立即刷新徽章...');
+        console.log('[NoteUI] Refreshing badges after note deletion...');
         
-        // 立即刷新植物笔记徽章
+        // Refresh plant note badge with forced cache bypass
         await this.updatePlantNoteBadge(this.currentPlantId);
         
-        // 如果有当前图像，也刷新图像笔记徽章
+        // If there's a current image, also refresh image note badge
         if (this.currentImageId && typeof loadImageNoteCount === 'function') {
           await loadImageNoteCount(this.currentPlantId, this.currentImageId);
-          console.log('[NoteUI] 图像笔记徽章已刷新');
+          console.log('[NoteUI] Image note badge refreshed after deletion');
         }
         
-        console.log('[NoteUI] 删除后徽章刷新完成');
+        console.log('[NoteUI] All badges refreshed after deletion');
       }
     } catch (error) {
       console.error('Delete note failed:', error);
@@ -1129,12 +1144,30 @@ export class NoteUI {
         
         if (badge) {
           if (totalNotes > 0) {
-            badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
+            // 🔧 FIX: 分离显示植株笔记和图片笔记
+            let badgeText = '';
+            let title = '';
+            
+            if (stats.plantNotes > 0 && stats.imageNotes > 0) {
+              // 两种笔记都有
+              badgeText = `📝 ${stats.plantNotes} | 🖼️ ${stats.imageNotes}`;
+              title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+            } else if (stats.plantNotes > 0) {
+              // 只有植株笔记
+              badgeText = `📝 ${stats.plantNotes}`;
+              title = `${stats.plantNotes} plant notes`;
+            } else if (stats.imageNotes > 0) {
+              // 只有图片笔记
+              badgeText = `🖼️ ${stats.imageNotes}`;
+              title = `${stats.imageNotes} image notes`;
+            }
+            
+            badge.innerHTML = `<span class="note-count">${badgeText}</span>`;
             badge.style.display = 'inline-flex';
             badge.style.visibility = 'visible';
             badge.style.opacity = '1';
-            badge.title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
-            console.log(`[NoteUI] Badge updated for ${plantId}: showing ${totalNotes} notes (BULK)`);
+            badge.title = title;
+            console.log(`[NoteUI] Badge updated for ${plantId}: ${badgeText} (SEPARATED)`);
           } else {
             badge.style.display = 'none';
             badge.style.visibility = 'hidden';
@@ -1217,12 +1250,31 @@ export class NoteUI {
       
       if (badge) {
         if (totalNotes > 0) {
-          badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
+          // 🔧 FIX: 分离显示植株笔记和图片笔记（降级处理）
+          const plantNotesCount = plantNotes?.length || 0;
+          let badgeText = '';
+          let title = '';
+          
+          if (plantNotesCount > 0 && totalImageNotes > 0) {
+            // 两种笔记都有
+            badgeText = `📝 ${plantNotesCount} | 🖼️ ${totalImageNotes}`;
+            title = `${plantNotesCount} plant notes, ${totalImageNotes} image notes`;
+          } else if (plantNotesCount > 0) {
+            // 只有植株笔记
+            badgeText = `📝 ${plantNotesCount}`;
+            title = `${plantNotesCount} plant notes`;
+          } else if (totalImageNotes > 0) {
+            // 只有图片笔记
+            badgeText = `🖼️ ${totalImageNotes}`;
+            title = `${totalImageNotes} image notes`;
+          }
+          
+          badge.innerHTML = `<span class="note-count">${badgeText}</span>`;
           badge.style.display = 'inline-flex';
           badge.style.visibility = 'visible';
           badge.style.opacity = '1';
-          badge.title = `${plantNotes?.length || 0} plant notes, ${totalImageNotes} image notes`;
-          console.log(`[NoteUI] Badge updated for ${plantId}: showing ${totalNotes} notes`);
+          badge.title = title;
+          console.log(`[NoteUI] Badge updated for ${plantId}: ${badgeText} (INDIVIDUAL)`);
         } else {
           badge.style.display = 'none';
           badge.style.visibility = 'hidden';
