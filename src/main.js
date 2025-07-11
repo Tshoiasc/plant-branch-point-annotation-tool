@@ -2663,7 +2663,7 @@ async function generatePreviewHTML(groupedData) {
           <div>
             <span style="font-weight: 600; color: #1f2937;">🌱 ${plantId}</span>
             <span style="color: #6b7280; margin-left: 10px;">
-              ${viewAngles.length} 个视角 • ${totalImages} 张图像 • ${totalKeypoints} 个标注点
+              ${viewAngles.length} views • ${totalImages} images • ${totalKeypoints} 个标注点
             </span>
           </div>
           <span class="preview-toggle" style="color: #6b7280;">▼</span>

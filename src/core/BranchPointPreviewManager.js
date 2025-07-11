@@ -388,13 +388,13 @@ export class BranchPointPreviewManager {
    */
   updatePreviewTitle(imageData, annotationCount) {
     if (this.previewTitle) {
-      const timeString = imageData.timeString || '未知时间';
+      const timeString = imageData.timeString || 'Unknown time';
       
       // 获取下一个要标注的编号（最小的缺失编号）
       const nextOrder = this.getNextOrderToAnnotate();
       
-      this.previewTitle.textContent = `参考: 第${nextOrder}个分支点`;
-      this.previewTitle.title = `${timeString} - 当前需要标注第${nextOrder}个分支点的位置`;
+      this.previewTitle.textContent = `Reference: ${nextOrder}th branch point`;
+      this.previewTitle.title = `${timeString} - Current need to annotate the position of the ${nextOrder}th branch point`;
     }
   }
 
