@@ -323,9 +323,12 @@ export class AnnotationTool {
     // 🔧 FIX: 清空标注点但不触发自动保存（防止覆盖已保存的数据）
     this.clearKeypointsWithoutSave();
     
+    // 🔧 FIX: Additional safety - clear any keypoint labels that might remain
+    this.clearKeypointLabels();
+    
     // 更新显示
     this.updateZoomInfo();
-    this.render(); // 现在会显示占位符而不是图像
+    this.render(); // 现在会显示占位符而不是图像和标注点
   }
 
   /**
@@ -377,6 +380,12 @@ export class AnnotationTool {
    * 渲染标注点
    */
   renderKeypoints() {
+    // 🔧 FIX: Don't render keypoints when no image is loaded to prevent "ghost" annotations
+    if (!this.imageElement || !this.imageLoaded) {
+      console.log('[AnnotationTool] Skipping keypoint render - no image loaded');
+      return;
+    }
+    
     // 清除所有标签元素
     this.clearKeypointLabels();
     
