@@ -1341,11 +1341,29 @@ export class NoteUI {
         const badge = document.getElementById(`note-badge-${plantId}`);
         if (badge) {
           if (totalNotes > 0) {
-            badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
+            // 🔧 FIX: Use consistent separated display format for instant bulk updates
+            let badgeText = '';
+            let title = '';
+            
+            if (stats.plantNotes > 0 && stats.imageNotes > 0) {
+              // 两种笔记都有
+              badgeText = `📝 ${stats.plantNotes} | 🖼️ ${stats.imageNotes}`;
+              title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+            } else if (stats.plantNotes > 0) {
+              // 只有植株笔记
+              badgeText = `📝 ${stats.plantNotes}`;
+              title = `${stats.plantNotes} plant notes`;
+            } else if (stats.imageNotes > 0) {
+              // 只有图片笔记
+              badgeText = `🖼️ ${stats.imageNotes}`;
+              title = `${stats.imageNotes} image notes`;
+            }
+            
+            badge.innerHTML = `<span class="note-count">${badgeText}</span>`;
             badge.style.display = 'inline-flex';
             badge.style.visibility = 'visible';
             badge.style.opacity = '1';
-            badge.title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+            badge.title = title;
           } else {
             badge.style.display = 'none';
             badge.style.visibility = 'hidden';
@@ -1387,11 +1405,29 @@ export class NoteUI {
             const badge = document.getElementById(`note-badge-${plantId}`);
             if (badge) {
               if (totalNotes > 0) {
-                badge.innerHTML = `<span class="note-count">📝 ${totalNotes}</span>`;
+                // 🔧 FIX: Use consistent separated display format like updatePlantNoteBadge()
+                let badgeText = '';
+                let title = '';
+                
+                if (stats.plantNotes > 0 && stats.imageNotes > 0) {
+                  // 两种笔记都有
+                  badgeText = `📝 ${stats.plantNotes} | 🖼️ ${stats.imageNotes}`;
+                  title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+                } else if (stats.plantNotes > 0) {
+                  // 只有植株笔记
+                  badgeText = `📝 ${stats.plantNotes}`;
+                  title = `${stats.plantNotes} plant notes`;
+                } else if (stats.imageNotes > 0) {
+                  // 只有图片笔记
+                  badgeText = `🖼️ ${stats.imageNotes}`;
+                  title = `${stats.imageNotes} image notes`;
+                }
+                
+                badge.innerHTML = `<span class="note-count">${badgeText}</span>`;
                 badge.style.display = 'inline-flex';
                 badge.style.visibility = 'visible';
                 badge.style.opacity = '1';
-                badge.title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+                badge.title = title;
               } else {
                 badge.style.display = 'none';
                 badge.style.visibility = 'hidden';
