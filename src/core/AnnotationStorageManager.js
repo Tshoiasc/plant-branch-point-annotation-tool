@@ -382,6 +382,9 @@ export class AnnotationStorageManager {
    */
   async loadPlantStatus(plantId) {
     try {
+      console.log(`[状态加载] 开始为植物 ${plantId} 加载状态...`);
+      console.log(`[状态加载] useFileSystem: ${this.useFileSystem}, fileSystemManager存在: ${!!this.fileSystemManager}`);
+      
       // First check if we have status in memory
       const existingData = this.annotations.get(plantId);
       if (existingData && existingData.status) {
@@ -392,7 +395,9 @@ export class AnnotationStorageManager {
       // 🔧 FIX: Try to load from dedicated plant status API first
       if (this.useFileSystem && this.fileSystemManager.getPlantStatus) {
         try {
+          console.log(`[状态加载] 尝试从专用API加载植物 ${plantId} 状态...`);
           const statusData = await this.fileSystemManager.getPlantStatus(plantId);
+          console.log(`[状态加载] 专用API响应:`, statusData);
           if (statusData && statusData.status) {
             console.log(`[植物状态] ${plantId}: 从专用API加载状态 ${statusData.status}`);
             return statusData.status;
@@ -400,6 +405,8 @@ export class AnnotationStorageManager {
         } catch (apiError) {
           console.warn(`从专用API加载植株 ${plantId} 状态失败:`, apiError);
         }
+      } else {
+        console.log(`[状态加载] 跳过专用API: useFileSystem=${this.useFileSystem}, getPlantStatus存在=${!!this.fileSystemManager?.getPlantStatus}`);
       }
 
       // Fallback: Try to load from skip-info API for backwards compatibility

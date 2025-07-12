@@ -318,7 +318,9 @@ export class PlantDataManager {
           console.log(`[标注] 植物 ${plant.id}: skipped (${skipData.skipReason})`);
         } else {
           // 🔧 FIX: Check for persisted completion status before applying default logic
+          console.log(`[状态恢复] 开始检查植物 ${plant.id} 的持久化状态...`);
           const persistedStatus = await this.annotationStorage.loadPlantStatus(plant.id);
+          console.log(`[状态恢复] 植物 ${plant.id} 持久化状态结果: ${persistedStatus}`);
           
           if (persistedStatus === 'completed') {
             // 保持已完成状态，即使没有标注数据
@@ -333,6 +335,7 @@ export class PlantDataManager {
           } else {
             // 无标注数据且无持久化状态
             plant.status = 'pending';
+            console.log(`[标注] 植物 ${plant.id}: pending (无标注数据且无持久化状态)`);
           }
         }
 
