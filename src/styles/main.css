@@ -154,6 +154,7 @@ body {
   grid-template-columns: var(--sidebar-width) 300px 1fr;
   flex: 1;
   min-height: 0;
+  overflow: hidden; /* 🔧 CRITICAL FIX: Grid container needs overflow constraint */
 }
 
 /* 左侧植株列表面板 */
@@ -166,6 +167,7 @@ body {
   flex-shrink: 0;
   max-width: var(--sidebar-width);
   min-width: var(--sidebar-width);
+  overflow: hidden; /* 🔧 CRITICAL FIX: Grid cell needs overflow constraint for flex children to scroll */
 }
 
 .panel-header {
@@ -296,7 +298,8 @@ body {
   overflow-x: hidden;
   padding: var(--spacing-sm);
   min-height: 0;
-  max-height: calc(100vh - var(--header-height) - 200px); /* 减去header和统计区域的高度 */
+  /* 🔧 CRITICAL FIX: Use height instead of max-height for grid layout */
+  height: 100%;
 }
 
 /* 植物列表项 */
@@ -391,6 +394,7 @@ body {
   align-items: center;
   padding: var(--spacing-lg);
   border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0; /* 🔧 FIX: Ensure header doesn't shrink to allow scrollable area */
 }
 
 .section-header h3 {
@@ -470,7 +474,8 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
-  max-height: calc(100vh - var(--header-height) - 150px);
+  /* 🔧 CRITICAL FIX: Use height instead of max-height for grid layout */
+  height: 100%;
 }
 
 /* 图像缩略图样式 - 每行一个 */
@@ -671,17 +676,18 @@ body {
 
 /* 操作说明面板 - 优化布局 */
 .instruction-panel {
-  padding: var(--spacing-sm); /* 减少内边距 */
+  padding: var(--spacing-sm);
   background-color: var(--bg-secondary);
   border-left: 1px solid var(--border-color);
   overflow-y: auto;
   width: 300px;
   max-width: 300px;
   min-width: 280px;
-  max-height: calc(100vh - var(--header-height)); /* 确保不超出视口高度 */
+  /* 🔧 FIX: Remove viewport calculation - grid container handles height */
+  height: 100%; /* Take full height of grid cell */
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm); /* 统一间距 */
+  gap: var(--spacing-sm);
 }
 
 /* 压缩标题样式 */
@@ -1393,7 +1399,8 @@ body {
   }
   
   .plant-list-container {
-    max-height: 200px;
+    /* 🔧 CRITICAL FIX: Use height instead of max-height for proper scrolling */
+    height: 100%;
   }
   
   .thumbnail-panel {
@@ -1403,7 +1410,8 @@ body {
   }
   
   .thumbnail-container {
-    max-height: 150px;
+    /* 🔧 CRITICAL FIX: Use height instead of max-height for proper scrolling */
+    height: 100%;
   }
   
   .thumbnail-image {
@@ -1429,7 +1437,8 @@ body {
     min-width: auto;
     border-left: none;
     border-top: 1px solid var(--border-color);
-    max-height: 200px;
+    /* 🔧 FIX: Remove fixed max-height for responsive - let grid handle space allocation */
+    height: 100%; /* Use full available height from grid cell */
   }
   
   .view-angle-buttons {
