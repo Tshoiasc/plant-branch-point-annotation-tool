@@ -626,6 +626,15 @@ export class AnnotationTool {
             return;
           }
 
+          // 🔧 FIX: Check if image is loaded before allowing annotation creation
+          if (!this.imageElement || !this.imageLoaded) {
+            console.warn('[AnnotationTool] Cannot create annotation: no image loaded');
+            if (window.PlantAnnotationTool?.showError) {
+              window.PlantAnnotationTool.showError('No Image Loaded', 'Please select and load an image before creating annotations.');
+            }
+            return;
+          }
+
           // 记录空白区域点击，准备创建标注点
           this.state.blankAreaClickStart = mousePos;
           this.state.mouseDownTime = Date.now();
@@ -789,6 +798,15 @@ export class AnnotationTool {
    * 创建无方向标注点
    */
   createNoDirectionKeypoint(mousePos) {
+    // 🔧 FIX: Prevent annotation creation when no image is loaded
+    if (!this.imageElement || !this.imageLoaded) {
+      console.warn('[AnnotationTool] Cannot create annotation: no image loaded');
+      if (window.PlantAnnotationTool?.showError) {
+        window.PlantAnnotationTool.showError('No Image Loaded', 'Please select and load an image before creating annotations.');
+      }
+      return;
+    }
+
     const imagePos = this.screenToImage(mousePos.x, mousePos.y);
 
     // 创建无方向标注点
