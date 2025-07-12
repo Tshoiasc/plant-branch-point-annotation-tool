@@ -1085,13 +1085,324 @@ app.get('/api/notes/:noteId', async (req, res) => {
 });
 
 
+// ===========================================
+// 批量标注 API 端点
+// ===========================================
+
+// 批量保存标注数据
+app.post('/api/annotations/bulk', async (req, res) => {
+  try {
+    console.log('[Bulk Annotations API] Starting bulk save request...');
+    const startTime = Date.now();
+    
+    const annotationData = req.body;
+    
+    // 验证请求数据
+    if (!annotationData || typeof annotationData !== 'object') {
+      return res.status(400).json({
+        success: false,
+        error: '无效的标注数据格式'
+      });
+    }
+    
+    const annotationsDir = await ensureAnnotationsDirectory();
+    const filePath = path.join(annotationsDir, 'plant_annotations.json');
+    
+    // 创建备份
+    try {
+      await fs.access(filePath);
+      const backupPath = path.join(annotationsDir, `plant_annotations_backup_${Date.now()}.json`);
+      await fs.copyFile(filePath, backupPath);
+      console.log('[Bulk Annotations API] Created backup file');
+    } catch (error) {
+      console.log('[Bulk Annotations API] No existing file to backup');
+    }
+    
+    // 添加保存时间戳
+    const dataToSave = {
+      ...annotationData,
+      saveTime: new Date().toISOString(),
+      totalPlants: annotationData.totalPlants || 0
+    };
+    
+    // 保存新数据
+    await fs.writeFile(filePath, JSON.stringify(dataToSave, null, 2));
+    
+    const endTime = Date.now();
+    const processingTime = endTime - startTime;
+    
+    console.log(`[Bulk Annotations API] 保存了 ${dataToSave.totalPlants} 个植物的标注数据 (${processingTime}ms)`);
+    
+    res.json({
+      success: true,
+      message: '批量标注数据保存成功',
+      timestamp: new Date().toISOString(),
+      totalPlants: dataToSave.totalPlants,
+      processingTimeMs: processingTime
+    });
+    
+  } catch (error) {
+    console.error('[Bulk Annotations API] 批量保存标注数据失败:', error);
+    res.status(500).json({
+      success: false,
+      error: '批量保存标注数据失败',
+      details: error.message
+    });
+  }
+});
+
+// 批量加载标注数据 - 直接从文件系统实时读取
+app.get('/api/annotations/bulk', async (req, res) => {
+  try {
+    console.log('[Bulk API] Starting bulk annotations load from file system...');
+    const startTime = Date.now();
+    
+    const annotationsDir = await ensureAnnotationsDirectory();
+    
+    // 🚀 PERFORMANCE: Read all annotation files in parallel
+    const files = await fs.readdir(annotationsDir);
+    const annotationFiles = files.filter(file => 
+      file.endsWith('.json') && !file.endsWith('_skip_info.json') && !file.startsWith('note_')
+    );
+    
+    console.log(`[Bulk API] Found ${annotationFiles.length} annotation files to process`);
+    
+    const bulkData = {
+      plantAnnotations: {},
+      imageAnnotations: {},
+      statistics: {
+        totalPlants: 0,
+        totalImages: 0,
+        totalAnnotations: 0,
+        plantsWithAnnotations: 0,
+        imagesWithAnnotations: 0
+      }
+    };
+    
+    let totalAnnotationCount = 0;
+    const plantsWithAnnotations = new Set();
+    
+    // 🚀 Process all annotation files in parallel for maximum performance
+    const filePromises = annotationFiles.map(async (file) => {
+      try {
+        const filePath = path.join(annotationsDir, file);
+        const content = await fs.readFile(filePath, 'utf8');
+        const annotation = JSON.parse(content);
+        
+        if (annotation.annotations && annotation.annotations.length > 0) {
+          const imageId = file.replace('.json', '');
+          const plantId = imageId.split('_')[0]; // Extract plant ID from image ID
+          
+          // Store image annotations in the format frontend expects
+          bulkData.imageAnnotations[imageId] = annotation.annotations;
+          totalAnnotationCount += annotation.annotations.length;
+          plantsWithAnnotations.add(plantId);
+          
+          return { imageId, plantId, count: annotation.annotations.length };
+        }
+        return null;
+      } catch (error) {
+        console.warn(`[Bulk API] Failed to read ${file}:`, error.message);
+        return null;
+      }
+    });
+    
+    const results = await Promise.all(filePromises);
+    const validResults = results.filter(r => r !== null);
+    
+    // Update statistics to match frontend expectations
+    bulkData.statistics = {
+      totalPlants: plantsWithAnnotations.size,
+      totalImages: validResults.length,
+      totalAnnotations: totalAnnotationCount,
+      plantsWithAnnotations: plantsWithAnnotations.size,
+      imagesWithAnnotations: validResults.length
+    };
+    
+    const endTime = Date.now();
+    const loadTime = endTime - startTime;
+    
+    console.log(`[Bulk API] ✅ Successfully loaded ${totalAnnotationCount} annotations from ${validResults.length} images in ${loadTime}ms`);
+    console.log(`[Bulk API] 📊 Plants with annotations: ${plantsWithAnnotations.size}`);
+    console.log(`[Bulk API] 📊 Images with annotations: ${validResults.length}`);
+    
+    res.json({
+      success: true,
+      data: bulkData,
+      timestamp: new Date().toISOString(),
+      performance: {
+        loadTimeMs: loadTime,
+        filesProcessed: validResults.length,
+        annotationsLoaded: totalAnnotationCount
+      },
+      message: `批量加载 ${totalAnnotationCount} 个标注点从 ${validResults.length} 个图像成功 (${loadTime}ms)`
+    });
+    
+  } catch (error) {
+    console.error('[Bulk API] Failed to load bulk annotations:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load bulk annotation data',
+      fallback: {
+        message: 'Use individual annotation endpoints',
+        endpoints: [
+          '/api/plant-annotations/{plantId}',
+          '/api/image-annotations/{imageId}'
+        ]
+      }
+    });
+  }
+});
+
+// 获取批量标注统计信息
+app.get('/api/annotations/bulk/stats', async (req, res) => {
+  try {
+    const annotationsDir = await ensureAnnotationsDirectory();
+    const filePath = path.join(annotationsDir, 'plant_annotations.json');
+    
+    try {
+      const data = await fs.readFile(filePath, 'utf-8');
+      const annotationData = JSON.parse(data);
+      
+      const stats = {
+        totalPlants: annotationData.totalPlants || 0,
+        lastSaved: annotationData.saveTime,
+        annotationCount: Object.keys(annotationData.annotations || {}).length,
+        completedPlants: Object.values(annotationData.annotations || {})
+          .filter(plant => plant.annotations && plant.annotations.length > 0).length,
+        dataSize: JSON.stringify(annotationData).length,
+        fileExists: true
+      };
+      
+      res.json({
+        success: true,
+        data: stats,
+        message: `统计信息：${stats.totalPlants} 个植物，${stats.completedPlants} 个已完成标注`
+      });
+      
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        res.json({
+          success: true,
+          data: { 
+            totalPlants: 0, 
+            annotationCount: 0, 
+            completedPlants: 0,
+            lastSaved: null,
+            dataSize: 0,
+            fileExists: false
+          },
+          message: '未找到批量标注文件'
+        });
+      } else {
+        throw error;
+      }
+    }
+    
+  } catch (error) {
+    console.error('[Bulk Annotations API] 获取批量标注统计失败:', error);
+    res.status(500).json({
+      success: false,
+      error: '获取批量标注统计失败',
+      details: error.message
+    });
+  }
+});
+
+// 导出批量标注数据
+app.get('/api/annotations/bulk/export', async (req, res) => {
+  try {
+    const annotationsDir = await ensureAnnotationsDirectory();
+    const filePath = path.join(annotationsDir, 'plant_annotations.json');
+    
+    try {
+      const data = await fs.readFile(filePath, 'utf-8');
+      const annotationData = JSON.parse(data);
+      
+      // 设置下载头
+      const filename = `plant_annotations_${new Date().toISOString().split('T')[0]}.json`;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Type', 'application/json');
+      
+      console.log(`[Bulk Annotations API] 导出标注数据：${filename}`);
+      res.send(JSON.stringify(annotationData, null, 2));
+      
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        res.status(404).json({
+          success: false,
+          error: '未找到标注数据文件',
+          message: '请先保存一些标注数据'
+        });
+      } else {
+        throw error;
+      }
+    }
+    
+  } catch (error) {
+    console.error('[Bulk Annotations API] 导出批量标注数据失败:', error);
+    res.status(500).json({
+      success: false,
+      error: '导出批量标注数据失败',
+      details: error.message
+    });
+  }
+});
+
+// 删除批量标注数据
+app.delete('/api/annotations/bulk', async (req, res) => {
+  try {
+    const annotationsDir = await ensureAnnotationsDirectory();
+    const filePath = path.join(annotationsDir, 'plant_annotations.json');
+    
+    // 创建删除前备份
+    try {
+      await fs.access(filePath);
+      const backupPath = path.join(annotationsDir, `plant_annotations_deleted_backup_${Date.now()}.json`);
+      await fs.copyFile(filePath, backupPath);
+      await fs.unlink(filePath);
+      
+      console.log('[Bulk Annotations API] 删除批量标注数据并创建备份');
+      res.json({
+        success: true,
+        message: '批量标注数据已删除，备份已创建'
+      });
+      
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        res.json({
+          success: true,
+          message: '批量标注文件不存在'
+        });
+      } else {
+        throw error;
+      }
+    }
+    
+  } catch (error) {
+    console.error('[Bulk Annotations API] 删除批量标注数据失败:', error);
+    res.status(500).json({
+      success: false,
+      error: '删除批量标注数据失败',
+      details: error.message
+    });
+  }
+});
+
 // 健康检查
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     message: 'Backend server is running',
     timestamp: new Date().toISOString(),
-    datasetPath: DATASET_ROOT
+    datasetPath: DATASET_ROOT,
+    features: [
+      'plant-directories',
+      'plant-images', 
+      'individual-annotations',
+      'bulk-annotations',
+      'note-system'
+    ]
   });
 });
 

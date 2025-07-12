@@ -14,6 +14,8 @@ import { AnnotationTool } from './core/AnnotationTool.js';
 import { BranchPointPreviewManager } from './core/BranchPointPreviewManager.js';
 import { NoteManager } from './core/NoteManager.js';
 import { NoteUI } from './core/NoteUI.js';
+import { AnnotationManager } from './core/AnnotationManager.js';
+import { BulkLoadingPerformanceMonitor } from './utils/BulkLoadingPerformanceMonitor.js';
 
 // DOM元素引用
 let app = null;
@@ -27,6 +29,8 @@ let annotationTool = null;
 let branchPointPreviewManager = null;
 let noteManager = null;
 let noteUI = null;
+let annotationManager = null;
+let performanceMonitor = null;
 let currentDataset = null;
 
 // 应用状态
@@ -115,7 +119,31 @@ async function initializeApp() {
       console.warn('NoteManager初始化延迟:', error.message);
     }
     
-    updateFullscreenLoading(60, 'Checking compatibility...', 'Verifying browser support and backend connection');
+    updateFullscreenLoading(60, 'Setting up annotation manager...', 'Initializing bulk annotation loading system');
+    
+    // 初始化标注管理器
+    try {
+      annotationManager = new AnnotationManager(plantDataManager.fileSystemManager);
+      
+      window.PlantAnnotationTool.annotationManager = annotationManager;
+      console.log('标注管理器初始化成功');
+    } catch (error) {
+      console.warn('AnnotationManager初始化延迟:', error.message);
+    }
+    
+    updateFullscreenLoading(65, 'Setting up performance monitoring...', 'Initializing bulk loading performance tracking');
+    
+    // 初始化性能监控器
+    try {
+      performanceMonitor = new BulkLoadingPerformanceMonitor();
+      
+      window.PlantAnnotationTool.performanceMonitor = performanceMonitor;
+      console.log('性能监控器初始化成功');
+    } catch (error) {
+      console.warn('性能监控器初始化延迟:', error.message);
+    }
+    
+    updateFullscreenLoading(70, 'Checking compatibility...', 'Verifying browser support and backend connection');
     
     // 检查浏览器兼容性
     await checkBrowserCompatibility();
@@ -752,8 +780,10 @@ function createPlantListItem(plant) {
       <div class="plant-header">
         <div class="plant-status">${statusIcon}</div>
         <div class="plant-id">${plant.id}</div>
-        <div class="plant-note-badge" id="note-badge-${plant.id}" style="display: none;"></div>
-        ${skipButtonHtml}
+        <div class="right-box">
+          <div class="plant-note-badge" id="note-badge-${plant.id}" style="display: none;"></div>
+          ${skipButtonHtml}
+        </div>
       </div>
       <div class="plant-info">
         <div class="image-count">${imageCountText}</div>
@@ -777,7 +807,7 @@ function createPlantListItem(plant) {
 }
 
 /**
- * Load and display image note count
+ * Load and display image note count with refresh detection
  */
 async function loadImageNoteCount(plantId, imageId) {
   try {
@@ -790,7 +820,30 @@ async function loadImageNoteCount(plantId, imageId) {
     const noteManager = window.PlantAnnotationTool.noteManager;
     console.log(`[Thumbnail] Loading note count for ${plantId}/${imageId}`);
     
-    const notes = await noteManager.getImageNotes(plantId, imageId);
+    // 🔧 FIX: Check if this is a forced refresh (no cache) scenario
+    const isDirectRefresh = arguments[2]; // Hidden parameter for direct refresh flag
+    let notes;
+    
+    if (isDirectRefresh) {
+      // Force direct API call without cache
+      console.log(`[Thumbnail] Using direct API for forced refresh of ${imageId}`);
+      try {
+        const response = await fetch(`${noteManager.baseUrl}/notes/image/${plantId}/${imageId}`);
+        if (response.ok) {
+          const result = await response.json();
+          notes = result.success ? (result.data || []) : [];
+        } else {
+          notes = [];
+        }
+      } catch (directError) {
+        console.warn(`[Thumbnail] Direct API failed, falling back to cache for ${imageId}:`, directError);
+        notes = await noteManager.getImageNotes(plantId, imageId);
+      }
+    } else {
+      // Normal cached operation
+      notes = await noteManager.getImageNotes(plantId, imageId);
+    }
+    
     const noteCount = notes ? notes.length : 0;
     console.log(`[Thumbnail] Found ${noteCount} notes for ${imageId}`);
     
@@ -3609,19 +3662,27 @@ function hideFullscreenLoading() {
 }
 
 /**
- * 自动连接数据集
+ * 自动连接数据集 - 完整批量加载版本 (带性能监控)
  */
 async function autoConnectDataset() {
-  console.log('开始自动连接数据集...');
+  console.log('开始自动连接数据集 - 完整批量加载模式...');
+  
+  // 🔧 PERFORMANCE: 开始性能监控
+  if (performanceMonitor) {
+    performanceMonitor.startMonitoring();
+    performanceMonitor.addCheckpoint('开始数据集连接');
+  }
   
   try {
-    updateFullscreenLoading(95, 'Connecting to backend...', 'Establishing connection to the dataset service');
+    updateFullscreenLoading(5, 'Connecting to backend...', 'Establishing connection to the dataset service');
     
     // 检查后端连接
     let datasetInfo;
     try {
       datasetInfo = await plantDataManager.fileSystemManager.getDatasetInfo();
+      performanceMonitor?.addCheckpoint('后端连接成功');
     } catch (connectionError) {
+      performanceMonitor?.recordError(connectionError, '后端连接失败');
       throw new ConnectionError(
         '无法连接到后端服务',
         '请确保后端服务已启动。运行 ./start-backend.sh 启动服务器',
@@ -3634,18 +3695,24 @@ async function autoConnectDataset() {
     }
     
     if (!datasetInfo) {
-      throw new Error('后端服务响应异常：数据集信息为空');
+      const error = new Error('后端服务响应异常：数据集信息为空');
+      performanceMonitor?.recordError(error, '数据集信息验证');
+      throw error;
     }
 
     console.log('连接的数据集:', datasetInfo.datasetPath);
 
-    updateFullscreenLoading(98, 'Loading plant data...', 'Scanning plant directories and loading dataset');
+    updateFullscreenLoading(15, 'Validating dataset structure...', 'Checking plant directories and structure');
 
     // 验证目录结构
     await validateDatasetStructure();
+    performanceMonitor?.addCheckpoint('目录结构验证完成');
+
+    updateFullscreenLoading(25, 'Loading plant data...', 'Scanning plant directories and loading basic info');
 
     // 使用PlantDataManager加载数据集
     const plants = await plantDataManager.loadDataset();
+    performanceMonitor?.recordDataLoaded('plants', plants.length);
     
     // 更新应用状态
     appState.currentDatasetPath = datasetInfo.datasetPath;
@@ -3656,31 +3723,134 @@ async function autoConnectDataset() {
       plantCount: plants.length
     };
     
-    updateFullscreenLoading(100, 'Loading notes data...', 'Pre-loading all notes for instant badge updates');
-    
-    // Pre-load all notes data during initialization for instant badge updates
-    let notesLoaded = false;
-    try {
-      if (window.PlantAnnotationTool?.noteManager) {
-        console.log('[初始化] 开始预加载笔记数据...');
-        const bulkNotes = await window.PlantAnnotationTool.noteManager.getAllNotesInBulk();
-        if (bulkNotes) {
-          console.log('[初始化] 笔记数据预加载成功');
-          notesLoaded = true;
-        } else {
-          console.log('[初始化] 批量API不可用，跳过预加载');
-        }
-      }
-    } catch (error) {
-      console.warn('[初始化] 笔记预加载失败，将使用懒加载模式:', error.message);
+    console.log(`植物数据加载完成: ${plants.length} 个植物`);
+
+    // 🔧 PERFORMANCE OPTIMIZATION: 并行加载所有数据类型
+    updateFullscreenLoading(40, 'Loading all data types...', 'Bulk loading annotations, notes, and statistics');
+    performanceMonitor?.addCheckpoint('开始并行数据加载');
+
+    const loadingTasks = [];
+    const loadingResults = {
+      annotations: null,
+      notes: null,
+      annotationsLoaded: false,
+      notesLoaded: false,
+      errors: []
+    };
+
+    // 任务1: 批量加载标注数据
+    if (window.PlantAnnotationTool?.annotationManager) {
+      loadingTasks.push(
+        window.PlantAnnotationTool.annotationManager.getAllAnnotationsInBulk()
+          .then(bulkAnnotations => {
+            if (bulkAnnotations) {
+              loadingResults.annotations = bulkAnnotations;
+              loadingResults.annotationsLoaded = true;
+              performanceMonitor?.recordNetworkRequest('annotations', true);
+              performanceMonitor?.recordDataLoaded('annotations', 
+                Object.keys(bulkAnnotations.plantAnnotations || {}).length + 
+                Object.keys(bulkAnnotations.imageAnnotations || {}).length
+              );
+              console.log('[批量加载] 标注数据加载成功');
+              updateFullscreenLoading(60, 'Annotations loaded successfully...', 'Processing bulk annotation data');
+            } else {
+              console.log('[批量加载] 标注批量API不可用，将使用懒加载模式');
+              performanceMonitor?.recordFallback('标注批量API不可用');
+            }
+          })
+          .catch(error => {
+            console.warn('[批量加载] 标注数据加载失败:', error.message);
+            performanceMonitor?.recordError(error, '标注数据批量加载');
+            loadingResults.errors.push(`标注加载失败: ${error.message}`);
+          })
+      );
     }
+
+    // 任务2: 批量加载笔记数据
+    if (window.PlantAnnotationTool?.noteManager) {
+      loadingTasks.push(
+        window.PlantAnnotationTool.noteManager.getAllNotesInBulk()
+          .then(bulkNotes => {
+            if (bulkNotes) {
+              loadingResults.notes = bulkNotes;
+              loadingResults.notesLoaded = true;
+              performanceMonitor?.recordNetworkRequest('notes', true);
+              performanceMonitor?.recordDataLoaded('notes',
+                Object.keys(bulkNotes.plantNotes || {}).length +
+                Object.keys(bulkNotes.imageNotes || {}).length
+              );
+              console.log('[批量加载] 笔记数据加载成功');
+              updateFullscreenLoading(80, 'Notes loaded successfully...', 'Processing bulk note data');
+            } else {
+              console.log('[批量加载] 笔记批量API不可用，将使用懒加载模式');
+              performanceMonitor?.recordFallback('笔记批量API不可用');
+            }
+          })
+          .catch(error => {
+            console.warn('[批量加载] 笔记数据加载失败:', error.message);
+            performanceMonitor?.recordError(error, '笔记数据批量加载');
+            loadingResults.errors.push(`笔记加载失败: ${error.message}`);
+          })
+      );
+    }
+
+    // 等待所有加载任务完成
+    await Promise.allSettled(loadingTasks);
+    performanceMonitor?.addCheckpoint('并行数据加载完成');
+
+    updateFullscreenLoading(90, 'Processing loaded data...', 'Updating caches and preparing UI components');
+
+    // 生成最终状态消息
+    const loadedComponents = [];
+    if (loadingResults.annotationsLoaded) {
+      const annotationStats = loadingResults.annotations.statistics || {};
+      const totalAnnotations = annotationStats.totalAnnotations || 0;
+      loadedComponents.push(`${totalAnnotations} annotations`);
+    }
+    if (loadingResults.notesLoaded) {
+      const noteStats = loadingResults.notes.statistics || {};
+      const totalNotes = noteStats.totalNotes || 0;
+      loadedComponents.push(`${totalNotes} notes`);
+    }
+
+    const loadedMessage = loadedComponents.length > 0 
+      ? `All data loaded: ${plants.length} plants, ${loadedComponents.join(', ')}`
+      : `Dataset loaded: ${plants.length} plants (bulk APIs not available)`;
+
+    updateFullscreenLoading(95, 'Finalizing initialization...', loadedMessage);
+
+    // 🔧 PERFORMANCE: 预填充缓存以获得即时徽章更新
+    if (loadingResults.notesLoaded && window.PlantAnnotationTool?.noteUI) {
+      try {
+        await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadgesFromBulk(loadingResults.notes);
+        performanceMonitor?.addCheckpoint('笔记徽章预填充完成');
+        console.log('[批量加载] 笔记徽章预填充完成');
+      } catch (error) {
+        console.warn('[批量加载] 笔记徽章预填充失败:', error.message);
+        performanceMonitor?.recordError(error, '笔记徽章预填充');
+      }
+    }
+
+    updateFullscreenLoading(100, 'Initialization complete!', 'All systems ready - entering main application');
     
-    const finalMessage = notesLoaded ? 
-      'Ready! All data and notes loaded successfully.' : 
-      'Ready! Dataset loaded successfully.';
-    updateFullscreenLoading(100, 'Initialization complete!', finalMessage);
+    // 🔧 WAIT FOR COMPLETE LOADING: 只有在所有数据加载完成后才进入主应用
+    console.log(`[完整加载] 数据加载完成 - 标注: ${loadingResults.annotationsLoaded}, 笔记: ${loadingResults.notesLoaded}`);
     
-    // 短暂显示成功状态
+    if (loadingResults.errors.length > 0) {
+      console.warn('[完整加载] 部分数据加载失败:', loadingResults.errors);
+    }
+
+    // 🔧 PERFORMANCE: 结束性能监控并生成报告
+    let performanceReport = null;
+    if (performanceMonitor) {
+      performanceReport = performanceMonitor.endMonitoring();
+      console.log('🚀 [性能报告] 批量加载性能:', performanceReport);
+      
+      // 将性能报告存储到全局对象中以便调试
+      window.PlantAnnotationTool.lastPerformanceReport = performanceReport;
+    }
+
+    // 短暂显示成功状态，然后进入主应用
     setTimeout(() => {
       hideFullscreenLoading();
       
@@ -3691,16 +3861,23 @@ async function autoConnectDataset() {
       updateProgressStats();
       
       // 更新进度信息
-      const statusMsg = notesLoaded ? 
-        `Loaded ${plants.length} plants with pre-cached notes` :
-        `Loaded ${plants.length} plants`;
-      updateProgressInfo(statusMsg);
+      updateProgressInfo(loadedMessage);
       
-      console.log(`成功自动加载数据集: ${plants.length} 个植物${notesLoaded ? ' (包含预缓存笔记)' : ''}`);
-    }, 1000);
+      // 显示性能信息（如果有的话）
+      if (performanceReport && performanceReport.performanceGrade) {
+        const gradeMsg = `性能评级: ${performanceReport.performanceGrade} (${performanceReport.summary.totalLoadingTime})`;
+        console.log(`[完整加载] ${gradeMsg}`);
+      }
+      
+      console.log(`[完整加载] 应用启动完成: ${plants.length} 个植物, 标注已加载: ${loadingResults.annotationsLoaded}, 笔记已加载: ${loadingResults.notesLoaded}`);
+    }, 1500); // 稍长的延迟以显示完成状态
     
   } catch (error) {
     console.error('自动连接数据集失败:', error);
+    
+    // 记录错误到性能监控
+    performanceMonitor?.recordError(error, '数据集连接失败');
+    performanceMonitor?.endMonitoring();
     
     if (error instanceof ConnectionError) {
       hideFullscreenLoading();

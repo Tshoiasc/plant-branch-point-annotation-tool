@@ -2548,7 +2548,10 @@ body {
   transform: translateZ(0);
   will-change: transform;
 }
-
+.right-box{
+  margin-left: auto;
+  width: auto;
+}
 /* Note Badge Styles */
 .plant-note-badge {
   display: inline-flex;

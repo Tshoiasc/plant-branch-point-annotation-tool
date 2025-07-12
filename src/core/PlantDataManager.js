@@ -144,10 +144,123 @@ export class PlantDataManager {
   }
 
   /**
-   * 从文件系统恢复植物标注状态（优化版）
+   * 从文件系统恢复植物标注状态（批量优化版）
    */
   async restoreAnnotationStatusFromFileSystem(plants) {
     console.log('[标注] 开始从文件系统恢复植物状态...');
+
+    // 🚀 PERFORMANCE OPTIMIZATION: Try bulk loading first
+    let bulkAnnotationData = null;
+    try {
+      // Try to get bulk annotation data if AnnotationManager is available
+      if (window.PlantAnnotationTool?.annotationManager) {
+        console.log('[标注] 尝试使用批量标注数据进行快速状态恢复...');
+        bulkAnnotationData = await window.PlantAnnotationTool.annotationManager.getAllAnnotationsInBulk();
+        
+        if (bulkAnnotationData) {
+          console.log('[标注] 批量标注数据获取成功，使用高性能模式');
+          await this.restoreStatusFromBulkData(plants, bulkAnnotationData);
+          return; // Skip individual file reads completely
+        }
+      }
+    } catch (error) {
+      console.warn('[标注] 批量加载失败，回退到单独文件读取模式:', error);
+    }
+
+    // 🔄 FALLBACK: Individual file reading (legacy mode)
+    console.log('[标注] 使用传统单独文件读取模式');
+    await this.restoreStatusFromIndividualFiles(plants);
+  }
+
+  /**
+   * 从批量数据恢复植物状态（高性能模式）
+   */
+  async restoreStatusFromBulkData(plants, bulkData) {
+    console.log('[标注] 使用批量数据进行快速状态恢复...');
+    const startTime = performance.now();
+    
+    // Create lookup maps for fast access
+    const imageAnnotationsMap = bulkData.imageAnnotations || {};
+    const plantAnnotationsMap = bulkData.plantAnnotations || {};
+    
+    for (const plant of plants) {
+      try {
+        let hasAnnotations = false;
+        let totalAnnotations = 0;
+        let selectedViewAngle = null;
+        const viewAngleStats = {};
+
+        // 获取植物的所有图像（如果还没有加载）
+        if (!this.plantImages.has(plant.id)) {
+          const imagesByView = await this.fileSystemManager.readPlantImages(plant.id);
+          this.plantImages.set(plant.id, imagesByView);
+        }
+
+        const imagesByView = this.plantImages.get(plant.id);
+
+        // 检查每个视角的标注情况 - 使用内存查找而非文件读取
+        for (const [viewAngle, images] of Object.entries(imagesByView)) {
+          let viewAnnotationCount = 0;
+
+          for (const image of images) {
+            // 🚀 FAST LOOKUP: Use in-memory data instead of file reads
+            const imageAnnotations = imageAnnotationsMap[image.id];
+            if (imageAnnotations && imageAnnotations.length > 0) {
+              hasAnnotations = true;
+              const count = imageAnnotations.length;
+              totalAnnotations += count;
+              viewAnnotationCount += count;
+
+              // 记录最常用的视角作为选中视角
+              if (!selectedViewAngle || viewAnnotationCount > (viewAngleStats[selectedViewAngle] || 0)) {
+                selectedViewAngle = viewAngle;
+              }
+            }
+          }
+
+          if (viewAnnotationCount > 0) {
+            viewAngleStats[viewAngle] = viewAnnotationCount;
+          }
+        }
+
+        // 检查植物级标注
+        const plantAnnotations = plantAnnotationsMap[plant.id];
+        if (plantAnnotations && plantAnnotations.length > 0) {
+          hasAnnotations = true;
+          totalAnnotations += plantAnnotations.length;
+        }
+
+        // 检查是否有跳过信息
+        const skipData = this.annotationStorage.annotations.get(plant.id);
+        if (skipData && skipData.status === 'skipped') {
+          // 恢复跳过状态
+          plant.status = 'skipped';
+          plant.skipReason = skipData.skipReason;
+          plant.skipDate = skipData.skipDate;
+        } else if (hasAnnotations) {
+          // 有标注数据
+          plant.status = 'completed';
+          plant.selectedViewAngle = selectedViewAngle;
+        } else {
+          // 无标注数据
+          plant.status = 'pending';
+        }
+
+      } catch (error) {
+        console.warn(`[标注] 检查植物 ${plant.id} 状态失败:`, error);
+        plant.status = 'pending';
+      }
+    }
+
+    const endTime = performance.now();
+    console.log(`[标注] 批量状态恢复完成，耗时: ${(endTime - startTime).toFixed(2)}ms`);
+  }
+
+  /**
+   * 从单独文件恢复植物状态（传统模式）
+   */
+  async restoreStatusFromIndividualFiles(plants) {
+    console.log('[标注] 使用传统文件读取模式恢复状态...');
 
     // 获取所有标注文件列表（一次性获取）
     const allAnnotationFiles = await this.annotationStorage.fileSystemManager.getAllAnnotationFiles();

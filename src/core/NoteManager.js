@@ -30,6 +30,13 @@ export class NoteManager {
   }
 
   /**
+   * 获取基础URL (用于NoteUI兼容性)
+   */
+  get baseUrl() {
+    return this.httpManager.baseUrl;
+  }
+
+  /**
    * 初始化笔记管理器
    */
   async initialize() {

@@ -29,7 +29,8 @@ export class NoteUI {
       this.createNoteListModal();
       this.setupEventListeners();
       this.createNoteButtons();
-      console.log('[NoteUI] UI initialization completed');
+      this.injectNoteStyles(); // 🔧 FIX: Add styles for separated note display
+      console.log('[NoteUI] UI initialization completed with note separation styles');
       
       // Initialize plant note badges after a short delay
       setTimeout(() => {
@@ -529,7 +530,7 @@ export class NoteUI {
   }
 
   /**
-   * Load note list
+   * Load note list (unified to show ALL notes for plant, consistent with search)
    */
   async loadNoteList() {
     const listContainer = document.getElementById('note-list-content');
@@ -538,9 +539,15 @@ export class NoteUI {
     try {
       let notes;
       if (this.currentImageId) {
+        // For image notes, get specific image notes
         notes = await this.noteManager.getImageNotes(this.currentPlantId, this.currentImageId);
+        console.log(`[NoteUI] Loaded ${notes.length} image notes for ${this.currentImageId}`);
       } else {
+        // 🔧 FIX: For plant modal initial load, show ONLY plant-level notes
+        // Search function will show all notes when user explicitly searches
+        console.log(`[NoteUI] Loading plant-level notes only for ${this.currentPlantId}`);
         notes = await this.noteManager.getPlantNotes(this.currentPlantId);
+        console.log(`[NoteUI] Plant API loaded ${notes.length} plant-only notes for ${this.currentPlantId}`);
       }
 
       this.renderNoteList(notes);
@@ -552,7 +559,7 @@ export class NoteUI {
   }
 
   /**
-   * Render note list
+   * Render note list with proper plant/image note separation
    */
   renderNoteList(notes) {
     const listContainer = document.getElementById('note-list-content');
@@ -562,10 +569,76 @@ export class NoteUI {
       return;
     }
 
-    const noteItems = notes.map(note => {
+    // 🔧 FIX: Separate plant-level notes from image-level notes
+    const plantNotes = notes.filter(note => !note.imageId);
+    const imageNotes = notes.filter(note => note.imageId);
+    
+    console.log(`[NoteUI] Rendering ${plantNotes.length} plant notes and ${imageNotes.length} image notes`);
+
+    let html = '';
+    
+    // Render plant-level notes section
+    if (plantNotes.length > 0) {
+      html += `
+        <div class="notes-section">
+          <div class="section-header">
+            <h3 class="section-title">
+              <span class="section-icon">📝</span>
+              Plant Notes (${plantNotes.length})
+            </h3>
+          </div>
+          <div class="notes-list">
+            ${this.renderNoteItems(plantNotes, 'plant')}
+          </div>
+        </div>
+      `;
+    }
+    
+    // Render image-level notes section
+    if (imageNotes.length > 0) {
+      html += `
+        <div class="notes-section">
+          <div class="section-header">
+            <h3 class="section-title">
+              <span class="section-icon">🖼️</span>
+              Image Notes (${imageNotes.length})
+            </h3>
+          </div>
+          <div class="notes-list">
+            ${this.renderNoteItems(imageNotes, 'image')}
+          </div>
+        </div>
+      `;
+    }
+
+    listContainer.innerHTML = html;
+
+    // Bind edit and delete events
+    this.bindNoteActionEvents(listContainer);
+  }
+
+  /**
+   * Helper method to render note items with proper type indicators
+   */
+  renderNoteItems(notes, noteScope) {
+    return notes.map(note => {
       const formattedNote = this.noteManager.formatNoteForDisplay(note);
+      
+      // 🔧 FIX: Add visual indicators and image info for different note types
+      let scopeIndicator = '';
+      let imageInfo = '';
+      
+      if (noteScope === 'plant') {
+        scopeIndicator = '<span class="note-scope plant-scope">📝 Plant</span>';
+      } else if (noteScope === 'image') {
+        scopeIndicator = '<span class="note-scope image-scope">🖼️ Image</span>';
+        // Extract image name from imageId for display
+        const imageName = note.imageId ? note.imageId.split('_').slice(-1)[0] : 'Unknown';
+        imageInfo = `<div class="image-info">📷 Image: ${this.escapeHtml(imageName)}</div>`;
+      }
+      
       return `
-        <div class="note-item" data-note-id="${note.noteId}">
+        <div class="note-item ${noteScope}-note" data-note-id="${note.noteId}">
           <div class="note-item-header">
             <h4 class="note-title">${this.escapeHtml(formattedNote.title)}</h4>
             <div class="note-actions">
@@ -574,10 +647,12 @@ export class NoteUI {
             </div>
           </div>
           <div class="note-item-meta">
+            ${scopeIndicator}
             <span class="note-type note-type-${note.noteType}">${this.getNoteTypeText(note.noteType)}</span>
             <span class="note-timestamp">${formattedNote.formattedTimestamp}</span>
             <span class="note-author">Author: ${this.escapeHtml(note.author)}</span>
           </div>
+          ${imageInfo}
           <div class="note-content">
             ${this.escapeHtml(formattedNote.shortContent)}
           </div>
@@ -589,23 +664,124 @@ export class NoteUI {
         </div>
       `;
     }).join('');
+  }
 
-    listContainer.innerHTML = noteItems;
-
-    // Bind edit and delete events
-    listContainer.querySelectorAll('.edit-note-btn').forEach(btn => {
+  /**
+   * Helper method to bind note action events
+   */
+  bindNoteActionEvents(container) {
+    container.querySelectorAll('.edit-note-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const noteId = e.target.dataset.noteId;
         this.editNote(noteId);
       });
     });
 
-    listContainer.querySelectorAll('.delete-note-btn').forEach(btn => {
+    container.querySelectorAll('.delete-note-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const noteId = e.target.dataset.noteId;
         this.deleteNote(noteId);
       });
     });
+  }
+
+  /**
+   * Inject CSS styles for separated note display
+   */
+  injectNoteStyles() {
+    const styleId = 'note-separation-styles';
+    if (document.getElementById(styleId)) return; // Already injected
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      /* Note section separation styles */
+      .notes-section {
+        margin-bottom: 20px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      
+      .section-header {
+        background: #f9fafb;
+        padding: 12px 16px;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      
+      .section-title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: #374151;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .section-icon {
+        font-size: 18px;
+      }
+      
+      .notes-list {
+        background: white;
+      }
+      
+      /* Note scope indicators */
+      .note-scope {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 500;
+        margin-right: 8px;
+      }
+      
+      .plant-scope {
+        background: #dcfce7;
+        color: #166534;
+      }
+      
+      .image-scope {
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
+      
+      /* Image info display */
+      .image-info {
+        background: #f0f9ff;
+        border: 1px solid #bae6fd;
+        border-radius: 4px;
+        padding: 6px 10px;
+        margin: 8px 0;
+        font-size: 13px;
+        color: #0c4a6e;
+      }
+      
+      /* Note item styling for different types */
+      .plant-note {
+        border-left: 4px solid #22c55e;
+      }
+      
+      .image-note {
+        border-left: 4px solid #3b82f6;
+      }
+      
+      /* Enhance existing note item spacing */
+      .note-item {
+        margin-bottom: 0;
+        border-bottom: 1px solid #f3f4f6;
+      }
+      
+      .note-item:last-child {
+        border-bottom: none;
+      }
+    `;
+    
+    document.head.appendChild(style);
+    console.log('[NoteUI] Injected separation styles for plant/image notes');
   }
 
   /**
@@ -721,6 +897,16 @@ export class NoteUI {
         console.log('[NoteUI] Note manager cache completely cleared');
       }
       
+      // 🔧 FIX: Force refresh bulk data to ensure real-time accuracy
+      if (this.noteManager.refreshBulkData) {
+        try {
+          await this.noteManager.refreshBulkData();
+          console.log('[NoteUI] Bulk data forcefully refreshed for immediate sync');
+        } catch (refreshError) {
+          console.warn('[NoteUI] Bulk data refresh failed, cache cleared anyway:', refreshError);
+        }
+      }
+      
       // 🔧 FIX: Always refresh the note list modal regardless of visibility to show new note
       const listModal = document.getElementById('note-list-modal');
       if (listModal && listModal.style.display !== 'none') {
@@ -733,19 +919,21 @@ export class NoteUI {
       if (this.currentPlantId) {
         console.log('[NoteUI] 笔记保存完成，立即刷新徽章和按钮...');
         
+        // 🔧 FIX: Force real-time badge updates with fresh data (bypassing stale cache)
+        console.log('[NoteUI] Forcing immediate badge refresh with fresh data...');
+        
+        // Wait a bit longer for backend sync
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
         // 立即刷新植物笔记徽章和按钮
         await this.updatePlantNoteBadge(this.currentPlantId);
         await this.updatePlantNoteButton(this.currentPlantId);
         
-        // 如果是图像笔记，也刷新图像笔记徽章和按钮
+        // 如果是图像笔记，使用直接API调用刷新徽章避免缓存冲突
         if (this.currentImageId) {
-          await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
-          await this.refreshThumbnailNoteBadge(this.currentPlantId, this.currentImageId);
-          
-          // 🔧 FIX: Direct thumbnail badge update as backup
+          // ✅ CONSISTENCY: Use direct API call for save operations too
           await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
-          
-          console.log('[NoteUI] 图像笔记徽章和按钮已刷新');
+          console.log('[NoteUI] ✅ 图像笔记徽章通过直接API刷新完成');
         }
         
         console.log('[NoteUI] 笔记徽章和按钮刷新完成');
@@ -798,30 +986,36 @@ export class NoteUI {
         console.log('[NoteUI] Note manager cache cleared after deletion');
       }
       
+      // 🔧 FIX: Force refresh bulk data to ensure deletion is reflected immediately
+      if (this.noteManager.refreshBulkData) {
+        try {
+          await this.noteManager.refreshBulkData();
+          console.log('[NoteUI] Bulk data forcefully refreshed after deletion');
+        } catch (refreshError) {
+          console.warn('[NoteUI] Bulk data refresh failed after deletion, cache cleared anyway:', refreshError);
+        }
+      }
+      
       // Immediately refresh note list in modal with fresh data
       await this.loadNoteList();
       console.log('[NoteUI] Note list refreshed after deletion');
       
-      // 🔧 FIX: Immediately refresh all related badges and buttons after deletion
+      // 🔧 FIX: Streamlined badge refresh after deletion - direct API only
       if (this.currentPlantId) {
-        console.log('[NoteUI] Refreshing badges and buttons after note deletion...');
+        console.log('[NoteUI] Refreshing badges after note deletion using direct API calls...');
         
         // Force refresh plant note badge and button with bypassed cache
         await this.updatePlantNoteBadge(this.currentPlantId);
         await this.updatePlantNoteButton(this.currentPlantId);
         
-        // If there's a current image, also refresh image note badge and button
+        // If there's a current image, use ONLY direct API call to avoid cache conflicts
         if (this.currentImageId) {
-          await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
-          await this.refreshThumbnailNoteBadge(this.currentPlantId, this.currentImageId);
-          
-          // 🔧 FIX: Direct thumbnail badge update as backup after deletion
+          // ✅ SOLUTION: Skip cache-dependent methods, use direct API call exclusively
           await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
-          
-          console.log('[NoteUI] Image note badge and button refreshed after deletion');
+          console.log('[NoteUI] ✅ Image note badge updated via direct API after deletion');
         }
         
-        console.log('[NoteUI] All badges and buttons refreshed after deletion');
+        console.log('[NoteUI] All badges refreshed after deletion');
       }
     } catch (error) {
       console.error('Delete note failed:', error);
@@ -838,7 +1032,7 @@ export class NoteUI {
         await this.loadNoteList();
         if (this.currentPlantId) {
           await this.updatePlantNoteBadge(this.currentPlantId);
-          // 🔧 FIX: Also update image badge in error recovery
+          // 🔧 FIX: Also use direct API for error recovery to maintain consistency
           if (this.currentImageId) {
             await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
           }
@@ -852,33 +1046,62 @@ export class NoteUI {
   }
 
   /**
-   * Search notes
+   * Search notes with proper scope based on current modal context
    */
   async searchNotes() {
     const query = document.getElementById('note-search').value.trim();
     const typeFilter = document.getElementById('note-type-filter').value;
     
-    const filters = {};
-    if (this.currentPlantId) {
-      filters.plantId = this.currentPlantId;
-    }
-    if (typeFilter) {
-      filters.noteType = typeFilter;
-    }
-
     try {
-      console.log('[NoteUI] Starting note search with query:', query, 'filters:', filters);
-      const notes = await this.noteManager.searchNotes(query, filters);
-      console.log('[NoteUI] Search completed successfully, found', notes.length, 'notes');
+      let notes;
+      
+      if (this.currentImageId) {
+        // 🔧 FIX: In Image Notes modal - search only image notes for this specific image
+        console.log(`[NoteUI] Searching image notes for ${this.currentImageId} with query:`, query);
+        const allImageNotes = await this.noteManager.getImageNotes(this.currentPlantId, this.currentImageId);
+        
+        // Filter by query and type if provided
+        notes = allImageNotes.filter(note => {
+          const matchesQuery = !query || 
+            note.title.toLowerCase().includes(query.toLowerCase()) ||
+            note.content.toLowerCase().includes(query.toLowerCase()) ||
+            note.tags.some(tag => tag.toLowerCase().includes(query.toLowerCase()));
+          
+          const matchesType = !typeFilter || note.noteType === typeFilter;
+          
+          return matchesQuery && matchesType;
+        });
+        
+        console.log(`[NoteUI] Image note search completed: found ${notes.length} notes`);
+        
+      } else {
+        // 🔧 FIX: In Plant Notes modal - search ONLY plant-level notes for consistency
+        console.log(`[NoteUI] Searching plant-level notes only for ${this.currentPlantId} with query:`, query);
+        const allPlantNotes = await this.noteManager.getPlantNotes(this.currentPlantId);
+        
+        // Filter by query and type if provided  
+        notes = allPlantNotes.filter(note => {
+          const matchesQuery = !query || 
+            note.title.toLowerCase().includes(query.toLowerCase()) ||
+            note.content.toLowerCase().includes(query.toLowerCase()) ||
+            note.tags.some(tag => tag.toLowerCase().includes(query.toLowerCase()));
+          
+          const matchesType = !typeFilter || note.noteType === typeFilter;
+          
+          return matchesQuery && matchesType;
+        });
+        
+        console.log(`[NoteUI] Plant note search completed: found ${notes.length} plant-level notes (image notes excluded for consistency)`);
+      }
+      
       this.renderNoteList(notes);
+      
     } catch (error) {
       console.error('Search notes failed:', error);
-      console.error('Search URL that failed:', error.url || 'URL not available');
-      console.error('HTTP status:', error.status || 'Status not available');
       
       let errorMessage = 'Search failed: ';
       if (error.message.includes('404')) {
-        errorMessage += 'Search endpoint not found. Please check if the backend server is running and the search API is available.';
+        errorMessage += 'Notes not found or backend server unavailable.';
       } else if (error.message.includes('500')) {
         errorMessage += 'Server error occurred during search. Please try again.';
       } else {
@@ -979,7 +1202,7 @@ export class NoteUI {
   }
 
   /**
-   * Update plant note button count display
+   * Update plant note button count display (ALL notes for this plant)
    */
   async updatePlantNoteButton(plantId) {
     const plantNoteCountElement = document.getElementById('plant-note-count');
@@ -991,11 +1214,44 @@ export class NoteUI {
     }
     
     try {
-      const notes = await this.noteManager.getPlantNotes(plantId);
-      const count = notes ? notes.length : 0;
+      // 🔧 FIX: Use bulk stats first for performance, then fallback to search API for accuracy
+      let totalCount = 0;
       
-      if (count > 0) {
-        plantNoteCountElement.textContent = `(${count})`;
+      // Try bulk stats first (fast)
+      const bulkStats = await this.noteManager.getQuickNoteStats();
+      if (bulkStats && bulkStats[plantId]) {
+        // 🔧 FIX: Plant Notes button should ONLY show plant-level notes, not image notes
+        totalCount = bulkStats[plantId].plantNotes; // Only plant notes, not .total
+        console.log(`[NoteUI] Plant note button using bulk data: ${totalCount} plant-only notes`);
+        
+        // 🔧 FIX: Validate plant-only count with plant API (not search API)
+        if (Math.random() < 0.1) { // 10% spot-check for validation
+          try {
+            const plantNotes = await this.noteManager.getPlantNotes(plantId);
+            const actualCount = plantNotes ? plantNotes.length : 0;
+            if (actualCount !== totalCount) {
+              console.warn(`[NoteUI] Plant button bulk data inconsistency! Bulk: ${totalCount}, Actual: ${actualCount}. Using actual...`);
+              totalCount = actualCount;
+            }
+          } catch (validationError) {
+            console.debug('[NoteUI] Plant button validation failed, continuing with bulk data:', validationError);
+          }
+        }
+      } else {
+        // Fallback to plant API (only plant-level notes, consistent with button purpose)
+        console.log(`[NoteUI] Plant note button fallback to plant API for ${plantId}`);
+        try {
+          const plantNotes = await this.noteManager.getPlantNotes(plantId);
+          totalCount = plantNotes ? plantNotes.length : 0;
+          console.log(`[NoteUI] Plant note button plant API found: ${totalCount} plant-only notes`);
+        } catch (plantError) {
+          console.warn(`[NoteUI] Plant API failed, final fallback to 0:`, plantError);
+          totalCount = 0;
+        }
+      }
+      
+      if (totalCount > 0) {
+        plantNoteCountElement.textContent = `(${totalCount})`;
         plantNoteCountElement.style.cssText = `
           color: #059669;
           font-weight: bold;
@@ -1005,7 +1261,7 @@ export class NoteUI {
         plantNoteCountElement.textContent = '';
       }
       
-      console.log(`[NoteUI] Plant note button updated: ${count} notes`);
+      console.log(`[NoteUI] Plant note button updated: ${totalCount} total notes (plant + image)`);
     } catch (error) {
       console.error('Failed to update plant note button:', error);
       plantNoteCountElement.textContent = '';
@@ -1104,45 +1360,34 @@ export class NoteUI {
         
         console.log(`[NoteUI] Plant ${plantId} bulk stats: ${stats.plantNotes} plant + ${stats.imageNotes} image = ${totalNotes} total`);
         
-        const badge = document.getElementById(`note-badge-${plantId}`);
-        console.log(`[NoteUI] Badge element found for ${plantId}:`, !!badge);
-        
-        if (badge) {
-          if (totalNotes > 0) {
-            // 🔧 FIX: 分离显示植株笔记和图片笔记
-            let badgeText = '';
-            let title = '';
-            
-            if (stats.plantNotes > 0 && stats.imageNotes > 0) {
-              // 两种笔记都有
-              badgeText = `📝 ${stats.plantNotes} | 🖼️ ${stats.imageNotes}`;
-              title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
-            } else if (stats.plantNotes > 0) {
-              // 只有植株笔记
-              badgeText = `📝 ${stats.plantNotes}`;
-              title = `${stats.plantNotes} plant notes`;
-            } else if (stats.imageNotes > 0) {
-              // 只有图片笔记
-              badgeText = `🖼️ ${stats.imageNotes}`;
-              title = `${stats.imageNotes} image notes`;
+        // 🔧 FIX: Occasional validation to detect stale bulk data
+        if (Math.random() < 0.15) { // 15% validation rate for badges
+          try {
+            const validationResults = await this.noteManager.searchNotes('', { plantId: plantId });
+            const actualTotal = validationResults ? validationResults.length : 0;
+            if (actualTotal !== totalNotes) {
+              console.warn(`[NoteUI] Badge bulk data stale! Bulk: ${totalNotes}, Actual: ${actualTotal}. Using accurate data...`);
+              // Force refresh and use accurate data
+              if (this.noteManager.refreshBulkData) {
+                await this.noteManager.refreshBulkData();
+              }
+              // Fall through to individual method below
+            } else {
+              // Bulk data is accurate, proceed with badge update
+              this.updateBadgeWithStats(plantId, stats);
+              return;
             }
-            
-            badge.innerHTML = `<span class="note-count">${badgeText}</span>`;
-            badge.style.display = 'inline-flex';
-            badge.style.visibility = 'visible';
-            badge.style.opacity = '1';
-            badge.title = title;
-            console.log(`[NoteUI] Badge updated for ${plantId}: ${badgeText} (SEPARATED)`);
-          } else {
-            badge.style.display = 'none';
-            badge.style.visibility = 'hidden';
-            badge.style.opacity = '0';
-            console.log(`[NoteUI] Badge hidden for ${plantId}: no notes found (BULK)`);
+          } catch (validationError) {
+            console.debug('[NoteUI] Badge validation failed, using bulk data:', validationError);
+            // Continue with bulk data despite validation failure
+            this.updateBadgeWithStats(plantId, stats);
+            return;
           }
         } else {
-          console.error(`[NoteUI] Badge element not found for plant ${plantId}`);
+          // No validation this time, trust bulk data
+          this.updateBadgeWithStats(plantId, stats);
+          return;
         }
-        return; // Exit early if bulk data is available
       }
       
       console.log(`[NoteUI] Bulk stats not available for ${plantId}, falling back to individual requests`);
@@ -1251,6 +1496,51 @@ export class NoteUI {
       }
     } catch (error) {
       console.error(`Failed to update note badge for plant ${plantId}:`, error);
+    }
+  }
+
+  /**
+   * Helper method to update badge with provided stats
+   */
+  updateBadgeWithStats(plantId, stats) {
+    const badge = document.getElementById(`note-badge-${plantId}`);
+    console.log(`[NoteUI] Badge element found for ${plantId}:`, !!badge);
+    
+    if (badge) {
+      const totalNotes = stats.total;
+      if (totalNotes > 0) {
+        // 🔧 FIX: 分离显示植株笔记和图片笔记
+        let badgeText = '';
+        let title = '';
+        
+        if (stats.plantNotes > 0 && stats.imageNotes > 0) {
+          // 两种笔记都有
+          badgeText = `📝 ${stats.plantNotes} | 🖼️ ${stats.imageNotes}`;
+          title = `${stats.plantNotes} plant notes, ${stats.imageNotes} image notes`;
+        } else if (stats.plantNotes > 0) {
+          // 只有植株笔记
+          badgeText = `📝 ${stats.plantNotes}`;
+          title = `${stats.plantNotes} plant notes`;
+        } else if (stats.imageNotes > 0) {
+          // 只有图片笔记
+          badgeText = `🖼️ ${stats.imageNotes}`;
+          title = `${stats.imageNotes} image notes`;
+        }
+        
+        badge.innerHTML = `<span class="note-count">${badgeText}</span>`;
+        badge.style.display = 'inline-flex';
+        badge.style.visibility = 'visible';
+        badge.style.opacity = '1';
+        badge.title = title;
+        console.log(`[NoteUI] Badge updated for ${plantId}: ${badgeText} (VALIDATED)`);
+      } else {
+        badge.style.display = 'none';
+        badge.style.visibility = 'hidden';
+        badge.style.opacity = '0';
+        console.log(`[NoteUI] Badge hidden for ${plantId}: no notes found (VALIDATED)`);
+      }
+    } else {
+      console.error(`[NoteUI] Badge element not found for plant ${plantId}`);
     }
   }
 
@@ -1468,14 +1758,17 @@ export class NoteUI {
   }
 
   /**
-   * Direct thumbnail badge update (bypass cache issues)
+   * Direct thumbnail badge update (bypass all cache issues) - OPTIMIZED
    */
   async directUpdateThumbnailBadge(plantId, imageId) {
     try {
-      console.log(`[NoteUI] Direct thumbnail badge update for ${imageId}`);
+      console.log(`[NoteUI] 🔄 Direct thumbnail badge update for ${imageId}`);
+      
+      // 🔧 INCREASED DELAY: Allow backend processing to complete fully
+      await new Promise(resolve => setTimeout(resolve, 150));
       
       // Force fresh data by making direct API call
-      const response = await fetch(`${this.noteManager.baseUrl}/api/notes/image/${plantId}/${imageId}`);
+      const response = await fetch(`${this.noteManager.baseUrl}/notes/image/${plantId}/${imageId}`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -1490,17 +1783,30 @@ export class NoteUI {
           badge.innerHTML = `<span class="image-note-count">📝 ${noteCount}</span>`;
           badge.style.display = 'inline-block';
           badge.className = 'image-note-badge';
-          console.log(`[NoteUI] Direct badge update: ${noteCount} notes for ${imageId}`);
+          console.log(`[NoteUI] ✅ Badge updated: ${noteCount} notes for ${imageId} (DIRECT API)`);
         } else {
           badge.innerHTML = '';
           badge.style.display = 'none';
-          console.log(`[NoteUI] Direct badge clear for ${imageId} (no notes)`);
+          console.log(`[NoteUI] ✅ Badge cleared for ${imageId} - no notes (DIRECT API)`);
         }
       } else {
         console.error(`[NoteUI] Badge element not found for ${imageId}`);
       }
     } catch (error) {
-      console.error(`[NoteUI] Direct thumbnail badge update failed for ${imageId}:`, error);
+      console.error(`[NoteUI] ❌ Direct thumbnail badge update failed for ${imageId}:`, error);
+      
+      // 🔧 FALLBACK: Try global function as last resort
+      try {
+        console.log(`[NoteUI] 🔄 Attempting fallback via global loadImageNoteCount for ${imageId}`);
+        if (typeof loadImageNoteCount === 'function') {
+          await loadImageNoteCount(plantId, imageId);
+          console.log(`[NoteUI] ✅ Fallback badge update successful for ${imageId}`);
+        } else {
+          console.warn(`[NoteUI] ⚠️ Global loadImageNoteCount not available for fallback`);
+        }
+      } catch (fallbackError) {
+        console.error(`[NoteUI] ❌ Fallback badge update also failed for ${imageId}:`, fallbackError);
+      }
     }
   }
 
