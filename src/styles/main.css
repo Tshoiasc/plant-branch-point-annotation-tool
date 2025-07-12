@@ -232,7 +232,7 @@ body {
 }
 
 .progress-percentage {
-  margin-left:  var(--spacing-sm);
+  margin-left:  var(--spacing-xs);
   font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--primary-color);
@@ -3353,7 +3353,9 @@ body {
   .image-note-badge {
     display: none !important;
   }
-} /* Note count display styles */
+}
+
+/* Note count display styles */
 .note-count-display {
   color: #059669;
   font-weight: bold;
@@ -3381,10 +3383,12 @@ body {
 /* Image note badge improvements */
 .image-note-badge {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
+  bottom: 4px;
+  right: 4px;
   z-index: 10;
   pointer-events: none;
+  max-width: calc(100% - 8px);
+  overflow: hidden;
 }
 
 .image-note-count {
@@ -3395,6 +3399,10 @@ body {
   font-size: 11px;
   font-weight: bold;
   display: inline-block;
+  white-space: nowrap;
+  line-height: 1;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Button positioning improvements */

@@ -930,10 +930,21 @@ export class NoteUI {
     console.log(`[NoteUI] Setting current image ID: ${imageId}, current plant ID: ${this.currentPlantId}`);
     this.currentImageId = imageId;
     
-    // Ensure we have the current plant ID as well
-    if (!this.currentPlantId && window.PlantAnnotationTool?.appState?.currentPlant?.id) {
-      this.currentPlantId = window.PlantAnnotationTool.appState.currentPlant.id;
-      console.log(`[NoteUI] Auto-updated plant ID from global state: ${this.currentPlantId}`);
+    // 🔧 FIX: Always update image note button regardless of state
+    if (imageId && this.currentPlantId) {
+      // Ensure we have the current plant ID as well
+      if (!this.currentPlantId && window.PlantAnnotationTool?.appState?.currentPlant?.id) {
+        this.currentPlantId = window.PlantAnnotationTool.appState.currentPlant.id;
+        console.log(`[NoteUI] Auto-updated plant ID from global state: ${this.currentPlantId}`);
+      }
+      
+      // Update image note button and thumbnail badge
+      this.updateImageNoteButton(this.currentPlantId, imageId);
+      this.refreshThumbnailNoteBadge(this.currentPlantId, imageId);
+    } else {
+      // 🔧 FIX: Clear image note button when no image is selected
+      this.updateImageNoteButton(null, null);
+      console.log('[NoteUI] Image note button cleared - no image selected');
     }
     
     // Show image notes button and container
@@ -952,14 +963,6 @@ export class NoteUI {
       const shouldShow = this.currentPlantId && imageId;
       console.log(`[NoteUI] Image note container should show: ${shouldShow}`);
       imageNoteContainer.style.display = shouldShow ? 'block' : 'none';
-    }
-    
-    // Update image note button count and refresh thumbnail badge
-    if (this.currentPlantId && imageId) {
-      this.updateImageNoteButton(this.currentPlantId, imageId);
-      this.refreshThumbnailNoteBadge(this.currentPlantId, imageId);
-    } else {
-      this.updateImageNoteButton(null, null);
     }
   }
 

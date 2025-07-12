@@ -869,6 +869,12 @@ function initializeEmptyWorkspace() {
     viewAngleSection.style.display = 'none';
   }
   
+  // 🔧 FIX: Clear image note button badge when initializing empty workspace
+  if (window.PlantAnnotationTool?.noteUI) {
+    window.PlantAnnotationTool.noteUI.updateImageNoteButton(null, null);
+    console.log('[EmptyWorkspace] Image note button badge cleared');
+  }
+  
   // 更新进度信息
   updateProgressInfo('Please connect to dataset and select a plant');
 }
@@ -907,6 +913,12 @@ function clearWorkspaceState() {
   const titleElement = document.getElementById('current-plant-title');
   if (titleElement && !appState.currentPlant) {
     titleElement.textContent = 'Plant: Please select';
+  }
+  
+  // 🔧 FIX: Clear image note button badge when no image is selected
+  if (window.PlantAnnotationTool?.noteUI) {
+    window.PlantAnnotationTool.noteUI.updateImageNoteButton(null, null);
+    console.log('[Workspace] Image note button badge cleared');
   }
 }
 
