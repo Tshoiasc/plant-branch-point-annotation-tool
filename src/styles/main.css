@@ -497,7 +497,7 @@ body {
 
 .image-thumbnail.selected {
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.2);
+  box-shadow: 0 0 0 4px rgba(79, 135, 254, 0.4);
 }
 
 .thumbnail-image {
