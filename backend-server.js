@@ -35,7 +35,7 @@ function parseImageDateTime(filename) {
   return new Date(0);
 }
 
-// 工具函数：格式化时间显示
+// 工具函数：格式化时间显示 - 🔧 FIXED: Only show date, no time
 function formatImageTime(filename) {
   const regex = /BR\d+-\d+-(\d{4}-\d{2}-\d{2})_(\d{2})_VIS_sv_\d+/;
   const match = filename.match(regex);
@@ -44,7 +44,8 @@ function formatImageTime(filename) {
     const dateStr = match[1];
     const hourStr = match[2];
     const date = new Date(`${dateStr}T${hourStr}:00:00`);
-    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    // 🔧 FIX: Remove time portion, only show year/month/day
+    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
   }
   
   return filename;
@@ -180,8 +181,37 @@ app.get('/api/plant-images/:plantId', async (req, res) => {
             }
           }
           
-          // 按时间排序
-          images.sort((a, b) => a.dateTime - b.dateTime);
+          // 🔧 ENHANCED: Improved chronological sorting with debugging
+          images.sort((a, b) => {
+            const dateA = a.dateTime;
+            const dateB = b.dateTime;
+            
+            // Handle invalid dates (should be very rare)
+            if (!(dateA instanceof Date) || isNaN(dateA.getTime())) {
+              console.warn(`Invalid dateTime for image ${a.name}: ${dateA}`);
+              return 1; // Put invalid dates at the end
+            }
+            if (!(dateB instanceof Date) || isNaN(dateB.getTime())) {
+              console.warn(`Invalid dateTime for image ${b.name}: ${dateB}`);
+              return -1; // Put invalid dates at the end
+            }
+            
+            // Sort chronologically (earliest first)
+            const result = dateA.getTime() - dateB.getTime();
+            
+            // Debug logging for first few comparisons to verify sorting
+            if (images.indexOf(a) < 5 || images.indexOf(b) < 5) {
+              console.log(`Sort comparison: ${a.name} (${a.timeString}) vs ${b.name} (${b.timeString}) = ${result}`);
+            }
+            
+            return result;
+          });
+          
+          // 🔧 DEBUG: Log final sorted order for verification  
+          if (images.length > 0) {
+            console.log(`${viewAngle} sorted images:`, images.map(img => `${img.name} (${img.timeString})`).join(', '));
+          }
+          
           imagesByView[viewAngle] = images;
         }
       } catch (error) {
@@ -495,6 +525,203 @@ app.delete('/api/skip-info/:plantId', async (req, res) => {
         message: '文件不存在'
       });
     } else {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+});
+
+// ===========================================
+// 植物状态管理 API 端点
+// ===========================================
+
+// 获取植物状态
+app.get('/api/plant-status/:plantId', async (req, res) => {
+  try {
+    const { plantId } = req.params;
+    
+    // 验证plantId参数
+    if (!plantId || typeof plantId !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: '植物ID不能为空且必须是字符串'
+      });
+    }
+    
+    // 验证plantId格式
+    if (!plantId.match(/^BR\d+-\d+$/)) {
+      return res.status(400).json({
+        success: false,
+        error: '植物ID格式无效，应该是BR开头的格式，如：BR017-113112'
+      });
+    }
+    
+    const annotationsDir = await ensureAnnotationsDirectory();
+    
+    // 首先尝试从专用状态文件加载
+    const statusFileName = `${plantId}_status.json`;
+    const statusFilePath = path.join(annotationsDir, statusFileName);
+    
+    try {
+      const statusContent = await fs.readFile(statusFilePath, 'utf8');
+      const statusData = JSON.parse(statusContent);
+      
+      res.json({
+        success: true,
+        data: {
+          plantId: statusData.plantId,
+          status: statusData.status,
+          lastModified: statusData.lastModified,
+          timestamp: statusData.timestamp
+        }
+      });
+      return;
+    } catch (statusError) {
+      if (statusError.code !== 'ENOENT') {
+        console.warn(`读取状态文件失败 ${statusFileName}:`, statusError);
+      }
+    }
+    
+    // 如果没有专用状态文件，检查是否有跳过信息文件
+    const skipFileName = `${plantId}_skip_info.json`;
+    const skipFilePath = path.join(annotationsDir, skipFileName);
+    
+    try {
+      const skipContent = await fs.readFile(skipFilePath, 'utf8');
+      const skipData = JSON.parse(skipContent);
+      
+      if (skipData.status) {
+        res.json({
+          success: true,
+          data: {
+            plantId: skipData.plantId,
+            status: skipData.status,
+            lastModified: skipData.lastModified,
+            skipReason: skipData.skipReason,
+            skipDate: skipData.skipDate
+          }
+        });
+        return;
+      }
+    } catch (skipError) {
+      if (skipError.code !== 'ENOENT') {
+        console.warn(`读取跳过信息文件失败 ${skipFileName}:`, skipError);
+      }
+    }
+    
+    // 如果都没有，返回null表示没有状态信息
+    res.json({
+      success: true,
+      data: null,
+      message: '未找到植物状态信息'
+    });
+    
+  } catch (error) {
+    console.error(`获取植物 ${req.params.plantId} 状态失败:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 保存植物状态
+app.post('/api/plant-status/:plantId', async (req, res) => {
+  try {
+    const { plantId } = req.params;
+    const { status, lastModified } = req.body;
+    
+    // 验证plantId参数
+    if (!plantId || typeof plantId !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: '植物ID不能为空且必须是字符串'
+      });
+    }
+    
+    // 验证plantId格式
+    if (!plantId.match(/^BR\d+-\d+$/)) {
+      return res.status(400).json({
+        success: false,
+        error: '植物ID格式无效，应该是BR开头的格式，如：BR017-113112'
+      });
+    }
+    
+    // 验证状态参数
+    if (!status || typeof status !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: '状态不能为空且必须是字符串'
+      });
+    }
+    
+    const validStatuses = ['pending', 'in-progress', 'completed', 'skipped'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `无效的状态值。允许的状态: ${validStatuses.join(', ')}`
+      });
+    }
+    
+    const annotationsDir = await ensureAnnotationsDirectory();
+    
+    // 创建状态数据
+    const statusData = {
+      plantId,
+      status,
+      lastModified: lastModified || new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+      version: '1.0'
+    };
+    
+    // 保存到专用状态文件
+    const statusFileName = `${plantId}_status.json`;
+    const statusFilePath = path.join(annotationsDir, statusFileName);
+    
+    await fs.writeFile(statusFilePath, JSON.stringify(statusData, null, 2));
+    
+    console.log(`植物 ${plantId} 状态已保存: ${status}`);
+    
+    res.json({
+      success: true,
+      data: statusData,
+      message: `植物状态已保存: ${status}`
+    });
+    
+  } catch (error) {
+    console.error(`保存植物 ${req.params.plantId} 状态失败:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 删除植物状态
+app.delete('/api/plant-status/:plantId', async (req, res) => {
+  try {
+    const { plantId } = req.params;
+    const annotationsDir = await ensureAnnotationsDirectory();
+    const statusFileName = `${plantId}_status.json`;
+    const statusFilePath = path.join(annotationsDir, statusFileName);
+    
+    await fs.unlink(statusFilePath);
+    
+    res.json({
+      success: true,
+      message: `植物 ${plantId} 状态已删除`
+    });
+    
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      res.json({
+        success: true,
+        message: '状态文件不存在'
+      });
+    } else {
+      console.error(`删除植物 ${req.params.plantId} 状态失败:`, error);
       res.status(500).json({
         success: false,
         error: error.message
@@ -1401,7 +1628,8 @@ app.get('/api/health', (req, res) => {
       'plant-images', 
       'individual-annotations',
       'bulk-annotations',
-      'note-system'
+      'note-system',
+      'plant-status'
     ]
   });
 });

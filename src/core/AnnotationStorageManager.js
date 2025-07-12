@@ -302,6 +302,162 @@ export class AnnotationStorageManager {
   }
 
   /**
+   * 🔧 FIX: Save plant status independently of annotations
+   */
+  async savePlantStatus(plantId, status) {
+    try {
+      // 获取或创建植株数据
+      let annotationData = this.annotations.get(plantId);
+      if (!annotationData) {
+        annotationData = {
+          plantId,
+          annotations: [],
+          lastModified: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          selectedViewAngle: null,
+          selectedImage: null,
+          plantViewAngles: [],
+          selectedViewAngleHistory: {},
+          timeSeriesMetadata: {}
+        };
+      }
+
+      // 更新状态和时间戳
+      annotationData.status = status;
+      annotationData.lastModified = new Date().toISOString();
+
+      this.annotations.set(plantId, annotationData);
+
+      // 🔧 FIX: Use dedicated plant status API instead of skip-info API
+      if (this.useFileSystem && this.fileSystemManager.savePlantStatus) {
+        try {
+          // HTTP模式：通过专用植物状态API保存
+          await this.fileSystemManager.savePlantStatus(plantId, status);
+          console.log(`植株 ${plantId} 状态 ${status} 已保存到专用API`);
+        } catch (apiError) {
+          console.warn('植物状态API保存失败，使用localStorage备份:', apiError);
+          this.saveToLocalStorage();
+          console.log(`植株 ${plantId} 状态已备份到localStorage`);
+        }
+      } else if (this.fileSystemManager && this.fileSystemManager.getAnnotationsDirectory()) {
+        try {
+          // 文件系统模式：保存为独立的状态文件
+          const fileName = `${plantId}_status.json`;
+          const annotationsHandle = this.fileSystemManager.getAnnotationsDirectory();
+          const fileHandle = await annotationsHandle.getFileHandle(fileName, { create: true });
+          const writable = await fileHandle.createWritable();
+
+          const statusData = {
+            plantId,
+            status,
+            lastModified: new Date().toISOString(),
+            timestamp: new Date().toISOString()
+          };
+
+          await writable.write(JSON.stringify(statusData, null, 2));
+          await writable.close();
+
+          console.log(`植株 ${plantId} 状态 ${status} 已保存到文件系统: ${fileName}`);
+        } catch (fsError) {
+          console.warn('文件系统保存状态失败，使用localStorage备份:', fsError);
+          this.saveToLocalStorage();
+          console.log(`植株 ${plantId} 状态已备份到localStorage`);
+        }
+      } else {
+        // 如果文件系统不可用，保存到localStorage
+        this.saveToLocalStorage();
+        console.log(`植株 ${plantId} 状态 ${status} 已保存到localStorage`);
+      }
+
+      console.log(`[植物状态] ${plantId}: ${status} (独立保存完成)`);
+
+    } catch (error) {
+      console.error(`保存植株 ${plantId} 状态失败:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 🔧 FIX: Load plant status independently for status restoration
+   */
+  async loadPlantStatus(plantId) {
+    try {
+      // First check if we have status in memory
+      const existingData = this.annotations.get(plantId);
+      if (existingData && existingData.status) {
+        console.log(`[植物状态] ${plantId}: 从内存加载状态 ${existingData.status}`);
+        return existingData.status;
+      }
+
+      // 🔧 FIX: Try to load from dedicated plant status API first
+      if (this.useFileSystem && this.fileSystemManager.getPlantStatus) {
+        try {
+          const statusData = await this.fileSystemManager.getPlantStatus(plantId);
+          if (statusData && statusData.status) {
+            console.log(`[植物状态] ${plantId}: 从专用API加载状态 ${statusData.status}`);
+            return statusData.status;
+          }
+        } catch (apiError) {
+          console.warn(`从专用API加载植株 ${plantId} 状态失败:`, apiError);
+        }
+      }
+
+      // Fallback: Try to load from skip-info API for backwards compatibility
+      if (this.useFileSystem && this.fileSystemManager.getSkipInfo) {
+        try {
+          const data = await this.fileSystemManager.getSkipInfo(plantId);
+          if (data && data.status) {
+            console.log(`[植物状态] ${plantId}: 从skip-info API加载状态 ${data.status} (向后兼容)`);
+            return data.status;
+          }
+        } catch (skipError) {
+          console.warn(`从skip-info API加载植株 ${plantId} 状态失败:`, skipError);
+        }
+      } else if (this.fileSystemManager && this.fileSystemManager.getAnnotationsDirectory()) {
+        try {
+          // 文件系统模式：尝试加载状态文件
+          const fileName = `${plantId}_status.json`;
+          const annotationsHandle = this.fileSystemManager.getAnnotationsDirectory();
+          const fileHandle = await annotationsHandle.getFileHandle(fileName);
+          const file = await fileHandle.getFile();
+          const content = await file.text();
+          const statusData = JSON.parse(content);
+          
+          if (statusData.status) {
+            console.log(`[植物状态] ${plantId}: 从文件系统加载状态 ${statusData.status}`);
+            return statusData.status;
+          }
+        } catch (fsError) {
+          // Status file doesn't exist, this is normal for pending plants
+          console.log(`[植物状态] ${plantId}: 无状态文件，使用默认状态`);
+        }
+      }
+
+      // Fallback to localStorage
+      try {
+        const localData = localStorage.getItem('plantAnnotations');
+        if (localData) {
+          const parsed = JSON.parse(localData);
+          if (parsed[plantId] && parsed[plantId].status) {
+            console.log(`[植物状态] ${plantId}: 从localStorage加载状态 ${parsed[plantId].status}`);
+            return parsed[plantId].status;
+          }
+        }
+      } catch (localError) {
+        console.warn('从localStorage加载状态失败:', localError);
+      }
+
+      // Return null if no status found (let calling code decide default)
+      console.log(`[植物状态] ${plantId}: 未找到持久化状态`);
+      return null;
+
+    } catch (error) {
+      console.error(`加载植株 ${plantId} 状态失败:`, error);
+      return null;
+    }
+  }
+
+  /**
    * 检查植物是否有标注数据
    */
   hasAnnotations(plantId) {

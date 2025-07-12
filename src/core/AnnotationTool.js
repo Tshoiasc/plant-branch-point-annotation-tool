@@ -98,18 +98,25 @@ export class AnnotationTool {
    * 初始化Canvas
    */
   initializeCanvas() {
+    // 🔧 FIX: Add resize state tracking and debouncing
+    this.resizeState = {
+      isResizing: false,
+      lastResizeTime: 0,
+      debounceTimeout: null,
+      dimensionsHistory: []
+    };
+    
     // 延迟设置Canvas尺寸，确保容器已正确渲染
     setTimeout(() => {
       this.resizeCanvasWithRetry();
-    }, 200); // 增加延迟时间
+    }, 200);
     
     // 设置Canvas样式
     this.canvas.style.cursor = 'crosshair';
     
-    // 监听窗口大小变化
+    // 🔧 FIX: Debounced window resize listener to prevent excessive resizing
     window.addEventListener('resize', () => {
-      this.resizeCanvas();
-      this.render();
+      this.debouncedResize();
     });
   }
 
@@ -147,7 +154,31 @@ export class AnnotationTool {
   }
 
   /**
-   * 调整Canvas尺寸
+   * 🔧 ENHANCED: Debounced resize handler to prevent resize loops
+   */
+  debouncedResize() {
+    const now = Date.now();
+    
+    // 🔧 FIX: Prevent resize loops with timing checks
+    if (this.resizeState.isResizing && (now - this.resizeState.lastResizeTime) < 100) {
+      console.debug('Resize loop detected, skipping resize');
+      return;
+    }
+    
+    // Clear existing debounce timeout
+    if (this.resizeState.debounceTimeout) {
+      clearTimeout(this.resizeState.debounceTimeout);
+    }
+    
+    // Debounce resize calls
+    this.resizeState.debounceTimeout = setTimeout(() => {
+      this.resizeCanvas();
+      this.render();
+    }, 150); // 150ms debounce
+  }
+
+  /**
+   * 调整Canvas尺寸 - Enhanced with loop prevention
    */
   resizeCanvas() {
     const container = this.canvas.parentElement;
@@ -159,19 +190,49 @@ export class AnnotationTool {
       return;
     }
     
-    // 设置Canvas实际尺寸
-    this.canvas.width = rect.width;
-    this.canvas.height = rect.height;
+    // 🔧 FIX: Prevent resize loops by checking if dimensions actually changed
+    const currentDimensions = `${rect.width}x${rect.height}`;
+    const history = this.resizeState.dimensionsHistory;
     
-    // 设置Canvas显示尺寸
-    this.canvas.style.width = rect.width + 'px';
-    this.canvas.style.height = rect.height + 'px';
+    // Check if we're oscillating between dimensions
+    if (history.length >= 3) {
+      const recent = history.slice(-3);
+      if (recent.includes(currentDimensions) && recent.filter(d => d === currentDimensions).length >= 2) {
+        console.warn(`Canvas resize oscillation detected (${currentDimensions}), stabilizing...`);
+        return;
+      }
+    }
     
-    console.log(`Canvas resized to ${rect.width}x${rect.height}`);
+    // Record dimension change
+    history.push(currentDimensions);
+    if (history.length > 5) {
+      history.shift(); // Keep only recent 5 changes
+    }
     
-    // 如果图像已加载，重新适应屏幕
-    if (this.imageLoaded && this.imageElement) {
-      this.fitToScreen();
+    // 🔧 FIX: Set resize state to prevent recursive calls
+    this.resizeState.isResizing = true;
+    this.resizeState.lastResizeTime = Date.now();
+    
+    try {
+      // 设置Canvas实际尺寸
+      this.canvas.width = rect.width;
+      this.canvas.height = rect.height;
+      
+      // 设置Canvas显示尺寸
+      this.canvas.style.width = rect.width + 'px';
+      this.canvas.style.height = rect.height + 'px';
+      
+      console.log(`Canvas resized to ${rect.width}x${rect.height}`);
+      
+      // 🔧 FIX: Only call fitToScreen if not already in resize process
+      if (this.imageLoaded && this.imageElement && !this.resizeState.fittingToScreen) {
+        this.safeFitToScreen();
+      }
+    } finally {
+      // Reset resize state after a delay
+      setTimeout(() => {
+        this.resizeState.isResizing = false;
+      }, 200);
     }
   }
 
@@ -234,8 +295,8 @@ export class AnnotationTool {
 
           // 根据preserveView参数决定是否重置视图
           if (!preserveView) {
-            // 重置视图到适合屏幕
-            this.fitToScreen();
+            // 🔧 FIX: Use safe fit to screen to prevent resize loops
+            this.safeFitToScreen();
             console.log('重置视图到适合屏幕');
           } else {
             console.log('保持当前视图状态');
@@ -264,7 +325,29 @@ export class AnnotationTool {
   }
 
   /**
-   * 适应屏幕尺寸
+   * 🔧 ENHANCED: Safe fit to screen with loop prevention
+   */
+  safeFitToScreen() {
+    // Prevent recursive fit-to-screen calls
+    if (this.resizeState.fittingToScreen) {
+      console.debug('fitToScreen already in progress, skipping');
+      return;
+    }
+    
+    this.resizeState.fittingToScreen = true;
+    
+    try {
+      this.fitToScreen();
+    } finally {
+      // Reset flag after processing
+      setTimeout(() => {
+        this.resizeState.fittingToScreen = false;
+      }, 50);
+    }
+  }
+
+  /**
+   * 适应屏幕尺寸 - Enhanced with stability checks
    */
   fitToScreen() {
     if (!this.imageElement || !this.imageLoaded) return;
@@ -274,20 +357,34 @@ export class AnnotationTool {
     const imageWidth = this.imageElement.width;
     const imageHeight = this.imageElement.height;
     
+    // 🔧 FIX: Validate canvas and image dimensions
+    if (canvasWidth <= 0 || canvasHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
+      console.warn('Invalid dimensions for fit to screen, skipping');
+      return;
+    }
+    
     // 计算缩放比例（保持宽高比）
     const scaleX = (canvasWidth * 0.9) / imageWidth;
     const scaleY = (canvasHeight * 0.9) / imageHeight;
     const scale = Math.min(scaleX, scaleY);
     
-    // 限制缩放范围
-    this.state.scale = Math.max(this.options.minZoom, Math.min(this.options.maxZoom, scale));
+    // 🔧 FIX: Add scale change detection to prevent unnecessary updates
+    const newScale = Math.max(this.options.minZoom, Math.min(this.options.maxZoom, scale));
+    const scaleChange = Math.abs(newScale - this.state.scale);
     
-    // 居中显示
-    this.state.translateX = (canvasWidth - imageWidth * this.state.scale) / 2;
-    this.state.translateY = (canvasHeight - imageHeight * this.state.scale) / 2;
-    
-    this.updateZoomInfo();
-    console.log(`Fit to screen: scale=${this.state.scale.toFixed(2)}`);
+    // Only update if scale change is significant (more than 1%)
+    if (scaleChange > 0.01) {
+      this.state.scale = newScale;
+      
+      // 居中显示
+      this.state.translateX = (canvasWidth - imageWidth * this.state.scale) / 2;
+      this.state.translateY = (canvasHeight - imageHeight * this.state.scale) / 2;
+      
+      this.updateZoomInfo();
+      console.log(`Fit to screen: scale=${this.state.scale.toFixed(2)} (change: ${scaleChange.toFixed(3)})`);
+    } else {
+      console.debug(`Scale change too small (${scaleChange.toFixed(3)}), skipping update`);
+    }
   }
 
   /**

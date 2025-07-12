@@ -17,6 +17,46 @@ import { NoteUI } from './core/NoteUI.js';
 import { AnnotationManager } from './core/AnnotationManager.js';
 import { BulkLoadingPerformanceMonitor } from './utils/BulkLoadingPerformanceMonitor.js';
 
+// 🔧 FIX: Global error handling to prevent uncaught promise errors
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('🚨 Unhandled Promise Rejection:', event.reason);
+  
+  // Check if it's the common Chrome extension message channel error
+  if (event.reason && typeof event.reason === 'object' && 
+      event.reason.message && event.reason.message.includes('message channel closed')) {
+    console.warn('Chrome extension message channel error detected - this is usually harmless');
+    event.preventDefault(); // Prevent the error from being logged to console
+    return;
+  }
+  
+  // Log other unhandled rejections but don't prevent them
+  console.error('Unhandled promise rejection details:', {
+    reason: event.reason,
+    promise: event.promise,
+    stack: event.reason?.stack
+  });
+});
+
+// 🔧 FIX: Global error handler for uncaught exceptions
+window.addEventListener('error', (event) => {
+  console.error('🚨 Uncaught Error:', event.error);
+  
+  // Check for async listener errors specifically
+  if (event.error && event.error.message && 
+      event.error.message.includes('asynchronous response')) {
+    console.warn('Async response listener error detected - likely Chrome extension related');
+    return;
+  }
+  
+  console.error('Global error details:', {
+    message: event.message,
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    error: event.error
+  });
+});
+
 // DOM元素引用
 let app = null;
 let loadingScreen = null;
@@ -556,7 +596,7 @@ async function validateDatasetStructure() {
 }
 
 /**
- * 更新统计进度条显示
+ * 更新统计进度条显示 - 🔧 ENHANCED: Plant-based progress instead of image-based
  */
 function updateProgressStats() {
   if (!plantDataManager) {
@@ -565,7 +605,6 @@ function updateProgressStats() {
   }
 
   const progressStats = plantDataManager.getProgress();
-  const imageStats = progressStats.images;
 
   // 获取DOM元素
   const progressStatsElement = document.getElementById('progress-stats');
@@ -581,21 +620,23 @@ function updateProgressStats() {
   // 显示统计区域
   progressStatsElement.style.display = 'block';
 
-  // 更新图片数量
+  // 🔧 FIX: Change from image count to plant count display
+  // Update completed plants count in the main progress display
   if (completedImagesCount) {
-    completedImagesCount.textContent = imageStats.completedImages;
+    const totalCompleted = progressStats.totalCompleted || (progressStats.completed + progressStats.skipped);
+    completedImagesCount.textContent = totalCompleted; // Now shows completed plants instead of images
   }
   
   if (totalImagesCount) {
-    totalImagesCount.textContent = imageStats.totalImages;
+    totalImagesCount.textContent = progressStats.total; // Now shows total plants instead of images
   }
 
-  // 更新完成百分比（包含跳过的植株）
+  // 更新完成百分比（基于植株完成率）
   if (completionPercentage) {
     completionPercentage.textContent = progressStats.completionRate + '%';
   }
 
-  // 更新植株数量（显示总完成数，包括跳过的）
+  // 更新植株数量详细信息（显示总完成数，包括跳过的）
   if (completedPlantsCount) {
     const totalCompleted = progressStats.totalCompleted || (progressStats.completed + progressStats.skipped);
     const skippedText = progressStats.skipped > 0 ? ` (${progressStats.skipped} skipped)` : '';
@@ -603,7 +644,7 @@ function updateProgressStats() {
   }
 
   if (totalPlantsCount) {
-    totalPlantsCount.textContent = `Total ${imageStats.totalPlants} plants`;
+    totalPlantsCount.textContent = `Total ${progressStats.total} plants`;
   }
 
   // 更新进度条（使用植株完成率，包含跳过的植株）
@@ -625,7 +666,9 @@ function updateProgressStats() {
     }
   }
 
-  console.log(`统计更新: ${imageStats.completedImages}/${imageStats.totalImages} 图片 (${imageStats.completionRate}%)`);
+  // 🔧 FIX: Update console log to show plant-based progress
+  const totalCompleted = progressStats.totalCompleted || (progressStats.completed + progressStats.skipped);
+  console.log(`统计更新: ${totalCompleted}/${progressStats.total} 植株 (${progressStats.completionRate}%)`);
 }
 
 /**
@@ -2541,6 +2584,106 @@ if (import.meta.env?.DEV) {
   console.log('- DEBUG_ANNOTATION_FILE(imageId) - 调试标注文件读取');
   console.log('- DEBUG_FIND_ANNOTATED_FILES(maxCheck) - 查找有标注数据的文件');
   console.log('- fixLegacyDataOrder() - 修复传统数据的序号字段');
+  console.log('- MIGRATE_PLANT_STATUS() - 🔧 NEW: 迁移植物完成状态数据');
+  
+  // 🔧 NEW: Migration script for plant completion status
+  window.MIGRATE_PLANT_STATUS = async function() {
+    console.log('=== 开始迁移植物完成状态数据 ===');
+    
+    try {
+      const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+      if (!plantDataManager) {
+        throw new Error('PlantDataManager未初始化，请先加载数据集');
+      }
+      
+      console.log('正在扫描所有植物状态...');
+      
+      const plants = plantDataManager.getPlantList();
+      let migratedCount = 0;
+      let alreadyCorrectCount = 0;
+      
+      for (const plant of plants) {
+        const plantId = plant.id;
+        console.log(`检查植物 ${plantId}，当前状态: ${plant.status}`);
+        
+        // Skip already skipped plants
+        if (plant.status === 'skipped') {
+          console.log(`${plantId}: 保持跳过状态`);
+          alreadyCorrectCount++;
+          continue;
+        }
+        
+        // Check if plant has annotations
+        let hasAnnotations = false;
+        try {
+          const annotations = plantDataManager.getPlantAnnotations(plantId);
+          hasAnnotations = annotations && annotations.length > 0;
+        } catch (error) {
+          console.warn(`无法检查 ${plantId} 的标注:`, error);
+        }
+        
+        let newStatus;
+        if (hasAnnotations && plant.status === 'completed') {
+          // 🔧 MIGRATION LOGIC: Plants with annotations that were auto-marked as completed
+          // should be set to 'completed' to maintain existing user expectations
+          newStatus = 'completed';
+          console.log(`${plantId}: 有标注且已标记完成 → 保持 completed 状态 (迁移兼容)`);
+          alreadyCorrectCount++;
+        } else if (hasAnnotations && plant.status !== 'completed') {
+          // Plants with annotations but not explicitly completed should be in-progress
+          newStatus = 'in-progress';
+          plantDataManager.updatePlantStatus(plantId, newStatus);
+          console.log(`${plantId}: 有标注但未明确完成 → 设置为 in-progress`);
+          migratedCount++;
+        } else if (!hasAnnotations) {
+          // Plants without annotations should be pending
+          newStatus = 'pending';
+          if (plant.status !== 'pending') {
+            plantDataManager.updatePlantStatus(plantId, newStatus);
+            console.log(`${plantId}: 无标注 → 设置为 pending`);
+            migratedCount++;
+          } else {
+            alreadyCorrectCount++;
+          }
+        } else {
+          alreadyCorrectCount++;
+        }
+      }
+      
+      console.log('=== 迁移完成 ===');
+      console.log(`总计扫描 ${plants.length} 个植物`);
+      console.log(`迁移了 ${migratedCount} 个植物的状态`);
+      console.log(`${alreadyCorrectCount} 个植物状态已正确`);
+      
+      // Refresh UI to show updated status
+      if (renderPlantList && typeof renderPlantList === 'function') {
+        renderPlantList(plants);
+        console.log('UI已刷新以显示新状态');
+      }
+      
+      if (updateProgressStats && typeof updateProgressStats === 'function') {
+        updateProgressStats();
+        console.log('进度统计已更新');
+      }
+      
+      console.log('💡 现在，只有点击 "Complete Plant" 按钮的植物才会标记为 completed');
+      console.log('💡 有标注但未点击完成按钮的植物显示为 in-progress');
+      
+      return {
+        success: true,
+        totalPlants: plants.length,
+        migratedCount,
+        alreadyCorrectCount
+      };
+      
+    } catch (error) {
+      console.error('迁移植物状态失败:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  };
 }
 
 /**

@@ -493,7 +493,7 @@ export class FileSystemManager {
   }
 
   /**
-   * 格式化图像时间显示
+   * 格式化图像时间显示 - 🔧 FIXED: Only show date, no time
    */
   formatImageTime(filename) {
     // 重新解析获取详细信息用于显示
@@ -505,7 +505,8 @@ export class FileSystemManager {
       const hourStr = match[2]; // 00
       
       const date = new Date(`${dateStr}T${hourStr}:00:00`);
-      return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+      // 🔧 FIX: Remove time portion, only show year/month/day
+      return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
     }
     
     return filename; // 如果无法解析，返回原文件名

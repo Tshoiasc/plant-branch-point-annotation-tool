@@ -238,8 +238,8 @@ export class PlantDataManager {
           plant.skipReason = skipData.skipReason;
           plant.skipDate = skipData.skipDate;
         } else if (hasAnnotations) {
-          // 有标注数据
-          plant.status = 'completed';
+          // 🔧 FIX: Plants with annotations are 'in-progress', not auto-completed
+          plant.status = 'in-progress';
           plant.selectedViewAngle = selectedViewAngle;
         } else {
           // 无标注数据
@@ -316,14 +316,24 @@ export class PlantDataManager {
           plant.skipReason = skipData.skipReason;
           plant.skipDate = skipData.skipDate;
           console.log(`[标注] 植物 ${plant.id}: skipped (${skipData.skipReason})`);
-        } else if (hasAnnotations) {
-          // 有标注数据
-          plant.status = 'completed';
-          plant.selectedViewAngle = selectedViewAngle;
-          console.log(`[标注] 植物 ${plant.id}: completed, 选中视角: ${selectedViewAngle} (${totalAnnotations} 个标注点)`);
         } else {
-          // 无标注数据
-          plant.status = 'pending';
+          // 🔧 FIX: Check for persisted completion status before applying default logic
+          const persistedStatus = await this.annotationStorage.loadPlantStatus(plant.id);
+          
+          if (persistedStatus === 'completed') {
+            // 保持已完成状态，即使没有标注数据
+            plant.status = 'completed';
+            plant.selectedViewAngle = selectedViewAngle;
+            console.log(`[标注] 植物 ${plant.id}: completed (从持久化存储恢复)`);
+          } else if (hasAnnotations) {
+            // 🔧 FIX: Plants with annotations are 'in-progress', not auto-completed
+            plant.status = 'in-progress';
+            plant.selectedViewAngle = selectedViewAngle;
+            console.log(`[标注] 植物 ${plant.id}: in-progress, 选中视角: ${selectedViewAngle} (${totalAnnotations} 个标注点)`);
+          } else {
+            // 无标注数据且无持久化状态
+            plant.status = 'pending';
+          }
         }
 
       } catch (error) {
@@ -469,7 +479,7 @@ export class PlantDataManager {
   }
 
   /**
-   * 更新植物状态
+   * 🔧 FIXED: 更新植物状态 - 始终保存状态到持久化存储
    */
   updatePlantStatus(plantId, status) {
     const plant = this.plants.get(plantId);
@@ -477,17 +487,25 @@ export class PlantDataManager {
       plant.status = status;
       plant.lastModified = new Date().toISOString();
 
-      // 如果有标注数据，同步更新到持久化存储
-      const annotations = this.getPlantAnnotations(plantId);
-      if (annotations.length > 0) {
-        const plantInfo = {
-          selectedImage: plant.selectedImage,
-          selectedViewAngle: plant.selectedViewAngle
-        };
-
-        // 异步更新，不阻塞UI
-        this.annotationStorage.savePlantAnnotations(plantId, annotations, plantInfo)
-          .catch(error => console.error('更新植物状态时保存失败:', error));
+      // 🔧 FIX: Always save plant status to persistent storage, regardless of annotations
+      if (this.annotationStorage) {
+        // Use the new savePlantStatus method for independent status persistence
+        this.annotationStorage.savePlantStatus(plantId, status)
+          .then(() => {
+            console.log(`[状态更新] ${plantId}: ${status} - 已保存到持久化存储`);
+          })
+          .catch(error => {
+            console.error('保存植物状态失败:', error);
+            // 备用方案：如果有标注数据，尝试传统的保存方法
+            const annotations = this.getPlantAnnotations(plantId);
+            if (annotations.length > 0) {
+              const plantInfo = {
+                selectedImage: plant.selectedImage,
+                selectedViewAngle: plant.selectedViewAngle
+              };
+              return this.annotationStorage.savePlantAnnotations(plantId, annotations, plantInfo);
+            }
+          });
       }
 
       this.emitPlantUpdated(plant);
@@ -633,10 +651,11 @@ export class PlantDataManager {
         console.log(`向后传播保存标注到 ${savedCount} 张图像`);
       }
 
-      // 更新植物状态
+      // 🔧 FIX: Update plant status - only set to in-progress when saving annotations
+      // Completion status should only be set explicitly via Complete Plant button
       plant.annotations = annotations;
       plant.lastModified = new Date().toISOString();
-      plant.status = annotations.length > 0 ? 'completed' : 'in-progress';
+      plant.status = annotations.length > 0 ? 'in-progress' : 'pending';
 
       // 更新内存缓存
       this.annotationStatus.set(plantId, annotations);

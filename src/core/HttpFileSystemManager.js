@@ -422,7 +422,7 @@ export class HttpFileSystemManager {
   }
 
   /**
-   * 格式化图像时间显示
+   * 格式化图像时间显示 - 🔧 FIXED: Only show date, no time
    */
   formatImageTime(filename) {
     const regex = /BR\d+-\d+-(\d{4}-\d{2}-\d{2})_(\d{2})_VIS_sv_\d+/;
@@ -432,7 +432,8 @@ export class HttpFileSystemManager {
       const dateStr = match[1];
       const hourStr = match[2];
       const date = new Date(`${dateStr}T${hourStr}:00:00`);
-      return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+      // 🔧 FIX: Remove time portion, only show year/month/day
+      return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
     }
     
     return filename;
@@ -522,6 +523,85 @@ export class HttpFileSystemManager {
       throw new Error(result.error || '删除跳过信息失败');
     } catch (error) {
       console.error(`删除植物 ${plantId} 跳过信息失败:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 🔧 FIX: Get plant status from dedicated API
+   */
+  async getPlantStatus(plantId) {
+    try {
+      const response = await fetch(`${this.baseUrl}/plant-status/${plantId}`);
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log(`[植物状态] 从API获取植物 ${plantId} 状态: ${result.data?.status || 'null'}`);
+        return result.data;
+      }
+      
+      // If no status found, return null (not an error)
+      if (response.status === 404 || result.message?.includes('未找到')) {
+        console.log(`[植物状态] 植物 ${plantId} 无状态信息`);
+        return null;
+      }
+      
+      throw new Error(result.error || '获取植物状态失败');
+    } catch (error) {
+      console.error(`获取植物 ${plantId} 状态失败:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 🔧 FIX: Save plant status to dedicated API
+   */
+  async savePlantStatus(plantId, status) {
+    try {
+      const response = await fetch(`${this.baseUrl}/plant-status/${plantId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          status, 
+          lastModified: new Date().toISOString() 
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log(`[植物状态] 保存植物 ${plantId} 状态: ${status}`);
+        return true;
+      }
+      
+      throw new Error(result.error || '保存植物状态失败');
+    } catch (error) {
+      console.error(`保存植物 ${plantId} 状态失败:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 🔧 FIX: Delete plant status from dedicated API
+   */
+  async deletePlantStatus(plantId) {
+    try {
+      const response = await fetch(`${this.baseUrl}/plant-status/${plantId}`, {
+        method: 'DELETE'
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log(`[植物状态] 删除植物 ${plantId} 状态`);
+        return true;
+      }
+      
+      throw new Error(result.error || '删除植物状态失败');
+    } catch (error) {
+      console.error(`删除植物 ${plantId} 状态失败:`, error);
       return false;
     }
   }
