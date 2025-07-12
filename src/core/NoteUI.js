@@ -933,7 +933,9 @@ export class NoteUI {
         if (this.currentImageId) {
           // ✅ CONSISTENCY: Use direct API call for save operations too
           await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
-          console.log('[NoteUI] ✅ 图像笔记徽章通过直接API刷新完成');
+          // 🔧 FIX: Also update the image note button count overlay
+          await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
+          console.log('[NoteUI] ✅ 图像笔记徽章和按钮计数通过直接API刷新完成');
         }
         
         console.log('[NoteUI] 笔记徽章和按钮刷新完成');
@@ -1012,7 +1014,9 @@ export class NoteUI {
         if (this.currentImageId) {
           // ✅ SOLUTION: Skip cache-dependent methods, use direct API call exclusively
           await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
-          console.log('[NoteUI] ✅ Image note badge updated via direct API after deletion');
+          // 🔧 FIX: Also update the image note button count overlay
+          await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
+          console.log('[NoteUI] ✅ Image note badge and button updated via direct API after deletion');
         }
         
         console.log('[NoteUI] All badges refreshed after deletion');
@@ -1035,6 +1039,8 @@ export class NoteUI {
           // 🔧 FIX: Also use direct API for error recovery to maintain consistency
           if (this.currentImageId) {
             await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
+            // 🔧 FIX: Also update the image note button count overlay in error recovery
+            await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
           }
         }
       } else {
