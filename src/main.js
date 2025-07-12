@@ -2027,7 +2027,7 @@ function handlePlantUpdated(event) {
     // 更新图像数量
     const imageCountElement = plantItem.querySelector('.image-count');
     if (imageCountElement && plant.imageCount > 0) {
-      imageCountElement.textContent = `${plant.imageCount} 张图像`;
+      imageCountElement.textContent = `${plant.imageCount} images`;
     }
     
     // 更新视角信息
