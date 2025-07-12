@@ -509,7 +509,7 @@ body {
 .thumbnail-image img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* object-fit: contain; */
   display: none;
 }
 
@@ -3383,8 +3383,8 @@ body {
 /* Image note badge improvements */
 .image-note-badge {
   position: absolute;
-  bottom: 4px;
-  right: 4px;
+  /* bottom: 4px; */
+  /* right: 4px; */
   z-index: 10;
   pointer-events: none;
   max-width: calc(100% - 8px);
@@ -3392,7 +3392,7 @@ body {
 }
 
 .image-note-count {
-  background: rgba(0, 0, 0, 0.8);
+  /* background: rgba(0, 0, 0, 0.8); */
   color: white;
   padding: 2px 6px;
   border-radius: 12px;
