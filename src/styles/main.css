@@ -731,7 +731,7 @@ body {
 }
 
 .zoom-lock-section {
-  padding: var(--spacing-xs); /* 减少内边距 */
+  padding: var(--spacing-sm); /* 减少内边距 */
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 0.375rem;

@@ -741,6 +741,10 @@ export class NoteUI {
         if (this.currentImageId) {
           await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
           await this.refreshThumbnailNoteBadge(this.currentPlantId, this.currentImageId);
+          
+          // 🔧 FIX: Direct thumbnail badge update as backup
+          await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
+          
           console.log('[NoteUI] 图像笔记徽章和按钮已刷新');
         }
         
@@ -810,6 +814,10 @@ export class NoteUI {
         if (this.currentImageId) {
           await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
           await this.refreshThumbnailNoteBadge(this.currentPlantId, this.currentImageId);
+          
+          // 🔧 FIX: Direct thumbnail badge update as backup after deletion
+          await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
+          
           console.log('[NoteUI] Image note badge and button refreshed after deletion');
         }
         
@@ -830,6 +838,10 @@ export class NoteUI {
         await this.loadNoteList();
         if (this.currentPlantId) {
           await this.updatePlantNoteBadge(this.currentPlantId);
+          // 🔧 FIX: Also update image badge in error recovery
+          if (this.currentImageId) {
+            await this.directUpdateThumbnailBadge(this.currentPlantId, this.currentImageId);
+          }
         }
       } else {
         errorMessage += error.message;
@@ -1052,6 +1064,20 @@ export class NoteUI {
    */
   async refreshThumbnailNoteBadge(plantId, imageId) {
     try {
+      // 🔧 FIX: Force cache invalidation for this specific image before refresh
+      const cacheKey = `image_${plantId}_${imageId}`;
+      if (this.noteManager.notes && this.noteManager.notes.has(cacheKey)) {
+        this.noteManager.notes.delete(cacheKey);
+        console.log(`[NoteUI] Force cleared cache for ${cacheKey}`);
+      }
+      
+      // 🔧 FIX: Also clear bulk data to ensure fresh load
+      if (this.noteManager.bulkNoteData) {
+        this.noteManager.bulkNoteData = null;
+        this.noteManager.bulkDataTimestamp = 0;
+        console.log(`[NoteUI] Force cleared bulk cache for thumbnail refresh`);
+      }
+      
       // Call the global function to refresh thumbnail badge
       if (typeof loadImageNoteCount === 'function') {
         await loadImageNoteCount(plantId, imageId);
@@ -1438,6 +1464,43 @@ export class NoteUI {
     } else {
       // Fall back to alert
       alert(`${title}: ${message}`);
+    }
+  }
+
+  /**
+   * Direct thumbnail badge update (bypass cache issues)
+   */
+  async directUpdateThumbnailBadge(plantId, imageId) {
+    try {
+      console.log(`[NoteUI] Direct thumbnail badge update for ${imageId}`);
+      
+      // Force fresh data by making direct API call
+      const response = await fetch(`${this.noteManager.baseUrl}/api/notes/image/${plantId}/${imageId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      const noteCount = result.success ? (result.data?.length || 0) : 0;
+      
+      // Update badge directly
+      const badge = document.getElementById(`image-note-badge-${imageId}`);
+      if (badge) {
+        if (noteCount > 0) {
+          badge.innerHTML = `<span class="image-note-count">📝 ${noteCount}</span>`;
+          badge.style.display = 'inline-block';
+          badge.className = 'image-note-badge';
+          console.log(`[NoteUI] Direct badge update: ${noteCount} notes for ${imageId}`);
+        } else {
+          badge.innerHTML = '';
+          badge.style.display = 'none';
+          console.log(`[NoteUI] Direct badge clear for ${imageId} (no notes)`);
+        }
+      } else {
+        console.error(`[NoteUI] Badge element not found for ${imageId}`);
+      }
+    } catch (error) {
+      console.error(`[NoteUI] Direct thumbnail badge update failed for ${imageId}:`, error);
     }
   }
 

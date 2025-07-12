@@ -783,35 +783,45 @@ async function loadImageNoteCount(plantId, imageId) {
   try {
     // Check if note system is available
     if (!window.PlantAnnotationTool || !window.PlantAnnotationTool.noteManager) {
+      console.warn(`[Thumbnail] Note system not available for ${imageId}`);
       return;
     }
     
     const noteManager = window.PlantAnnotationTool.noteManager;
+    console.log(`[Thumbnail] Loading note count for ${plantId}/${imageId}`);
+    
     const notes = await noteManager.getImageNotes(plantId, imageId);
     const noteCount = notes ? notes.length : 0;
+    console.log(`[Thumbnail] Found ${noteCount} notes for ${imageId}`);
     
     const badge = document.getElementById(`image-note-badge-${imageId}`);
     if (badge) {
+      console.log(`[Thumbnail] Badge element found for ${imageId}`);
       if (noteCount > 0) {
         badge.innerHTML = `<span class="image-note-count">📝 ${noteCount}</span>`;
         badge.style.display = 'inline-block';
         badge.className = 'image-note-badge';
+        console.log(`[Thumbnail] Badge updated with ${noteCount} notes for ${imageId}`);
       } else {
         // 🔧 FIX: Clear badge when no notes exist
         badge.innerHTML = '';
         badge.style.display = 'none';
+        console.log(`[Thumbnail] Badge cleared for ${imageId} (no notes)`);
       }
       console.log(`[Thumbnail] Badge updated for ${imageId}: ${noteCount} notes`);
+    } else {
+      console.error(`[Thumbnail] Badge element NOT FOUND for ${imageId} (ID: image-note-badge-${imageId})`);
     }
   } catch (error) {
     // Silently handle errors - note loading is not critical for UI
-    console.debug(`Note loading failed for image ${imageId}:`, error.message);
+    console.error(`[Thumbnail] Note loading failed for image ${imageId}:`, error.message);
     
     // 🔧 FIX: Clear badge on error to prevent stale data
     const badge = document.getElementById(`image-note-badge-${imageId}`);
     if (badge) {
       badge.innerHTML = '';
       badge.style.display = 'none';
+      console.log(`[Thumbnail] Badge cleared on error for ${imageId}`);
     }
   }
 }
