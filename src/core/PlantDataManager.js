@@ -237,13 +237,27 @@ export class PlantDataManager {
           plant.status = 'skipped';
           plant.skipReason = skipData.skipReason;
           plant.skipDate = skipData.skipDate;
-        } else if (hasAnnotations) {
-          // 🔧 FIX: Plants with annotations are 'in-progress', not auto-completed
-          plant.status = 'in-progress';
-          plant.selectedViewAngle = selectedViewAngle;
         } else {
-          // 无标注数据
-          plant.status = 'pending';
+          // 🔧 FIX: Check for persisted completion status from dedicated API in bulk mode too
+          console.log(`[批量恢复] 检查植物 ${plant.id} 的专用状态API...`);
+          const persistedStatus = await this.annotationStorage.loadPlantStatus(plant.id);
+          console.log(`[批量恢复] 植物 ${plant.id} 专用API状态: ${persistedStatus}`);
+          
+          if (persistedStatus === 'completed') {
+            // 保持已完成状态，即使没有标注数据  
+            plant.status = 'completed';
+            plant.selectedViewAngle = selectedViewAngle;
+            console.log(`[批量恢复] 植物 ${plant.id}: completed (从专用API恢复)`);
+          } else if (hasAnnotations) {
+            // 🔧 FIX: Plants with annotations are 'in-progress', not auto-completed
+            plant.status = 'in-progress';
+            plant.selectedViewAngle = selectedViewAngle;
+            console.log(`[批量恢复] 植物 ${plant.id}: in-progress (有标注数据)`);
+          } else {
+            // 无标注数据且无持久化状态
+            plant.status = 'pending';
+            console.log(`[批量恢复] 植物 ${plant.id}: pending (无数据)`);
+          }
         }
 
       } catch (error) {
