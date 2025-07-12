@@ -922,39 +922,9 @@ app.get('/api/notes/bulk', async (req, res) => {
   }
 });
 
-// 获取单个笔记
-app.get('/api/notes/:noteId', async (req, res) => {
-  try {
-    const { noteId } = req.params;
-    const filePath = getNoteFilePath(noteId);
-    
-    // 检查笔记是否存在
-    try {
-      await fs.access(filePath);
-    } catch (error) {
-      return res.status(404).json({
-        success: false,
-        error: '笔记不存在'
-      });
-    }
-    
-    const content = await fs.readFile(filePath, 'utf8');
-    const note = JSON.parse(content);
-    
-    res.json({
-      success: true,
-      data: note
-    });
-    
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// 🔧 FIX: Move specific routes BEFORE generic :noteId route to prevent route conflicts
 
-// 搜索笔记
+// 搜索笔记 - MOVED UP TO PREVENT ROUTE CONFLICT
 app.get('/api/notes/search', async (req, res) => {
   try {
     const { query, plantId, noteType, author } = req.query;
@@ -1016,66 +986,53 @@ app.get('/api/notes/search', async (req, res) => {
   }
 });
 
-
-// 获取所有笔记统计
+// 获取所有笔记统计 - MOVED UP TO PREVENT ROUTE CONFLICT
 app.get('/api/notes/stats', async (req, res) => {
   try {
     const annotationsDir = await ensureAnnotationsDirectory();
     const files = await fs.readdir(annotationsDir);
     const noteFiles = files.filter(file => file.startsWith('note_') && file.endsWith('.json'));
     
-    const stats = {
-      totalNotes: 0,
-      plantNotes: 0,
-      imageNotes: 0,
-      noteTypes: {},
-      authors: {},
-      recentNotes: []
-    };
+    let totalNotes = 0;
+    let plantNotes = 0;
+    let imageNotes = 0;
+    const notesByAuthor = {};
+    const notesByTag = {};
     
-    const allNotes = [];
     for (const file of noteFiles) {
       try {
         const filePath = path.join(annotationsDir, file);
         const content = await fs.readFile(filePath, 'utf8');
         const note = JSON.parse(content);
-        allNotes.push(note);
         
-        stats.totalNotes++;
+        totalNotes++;
         
-        if (note.imageId) {
-          stats.imageNotes++;
-        } else {
-          stats.plantNotes++;
+        if (note.noteType === 'plant') {
+          plantNotes++;
+        } else if (note.noteType === 'image') {
+          imageNotes++;
         }
         
-        // 统计笔记类型
-        stats.noteTypes[note.noteType] = (stats.noteTypes[note.noteType] || 0) + 1;
+        notesByAuthor[note.author] = (notesByAuthor[note.author] || 0) + 1;
         
-        // 统计作者
-        stats.authors[note.author] = (stats.authors[note.author] || 0) + 1;
+        note.tags.forEach(tag => {
+          notesByTag[tag] = (notesByTag[tag] || 0) + 1;
+        });
         
       } catch (error) {
         console.warn(`读取笔记文件 ${file} 失败:`, error.message);
       }
     }
     
-    // 最近的10个笔记
-    stats.recentNotes = allNotes
-      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-      .slice(0, 10)
-      .map(note => ({
-        noteId: note.noteId,
-        title: note.title,
-        plantId: note.plantId,
-        imageId: note.imageId,
-        noteType: note.noteType,
-        timestamp: note.timestamp
-      }));
-    
     res.json({
       success: true,
-      data: stats
+      data: {
+        totalNotes,
+        plantNotes,
+        imageNotes,
+        notesByAuthor,
+        notesByTag
+      }
     });
     
   } catch (error) {
@@ -1086,14 +1043,47 @@ app.get('/api/notes/stats', async (req, res) => {
   }
 });
 
-// 测试笔记路由注册
+// 测试笔记功能 - MOVED UP TO PREVENT ROUTE CONFLICT
 app.get('/api/notes/test', (req, res) => {
   res.json({
     success: true,
-    message: 'Note routes are working',
+    message: '笔记功能正常工作',
     timestamp: new Date().toISOString()
   });
 });
+
+// 获取单个笔记 - GENERIC ROUTE MOVED TO END
+app.get('/api/notes/:noteId', async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const filePath = getNoteFilePath(noteId);
+    
+    // 检查笔记是否存在
+    try {
+      await fs.access(filePath);
+    } catch (error) {
+      return res.status(404).json({
+        success: false,
+        error: '笔记不存在'
+      });
+    }
+    
+    const content = await fs.readFile(filePath, 'utf8');
+    const note = JSON.parse(content);
+    
+    res.json({
+      success: true,
+      data: note
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 
 // 健康检查
 app.get('/api/health', (req, res) => {

@@ -914,12 +914,19 @@ export class NoteUI {
 
       this.closeNoteModal();
       
-      // 🔧 FIX: Immediately refresh the note list modal if it's open to show new note
+      // 🔧 FIX: Force immediate cache clear to ensure fresh data
+      console.log('[NoteUI] Note saved, forcing cache clear for fresh data...');
+      if (this.noteManager.clearCache) {
+        this.noteManager.clearCache();
+        console.log('[NoteUI] Note manager cache cleared');
+      }
+      
+      // 🔧 FIX: Always refresh the note list modal regardless of visibility to show new note
       const listModal = document.getElementById('note-list-modal');
-      if (listModal && listModal.style.display === 'flex') {
-        console.log('[NoteUI] Modal is open, refreshing note list to show new note');
+      if (listModal) {
+        console.log('[NoteUI] Refreshing note list to show new/updated note');
         await this.loadNoteList();
-        console.log('[NoteUI] Note list refreshed in modal');
+        console.log('[NoteUI] Note list refreshed');
       }
 
       // 🔧 FIX: 立即刷新植物笔记徽章和图像笔记徽章
@@ -1027,11 +1034,25 @@ export class NoteUI {
     }
 
     try {
+      console.log('[NoteUI] Starting note search with query:', query, 'filters:', filters);
       const notes = await this.noteManager.searchNotes(query, filters);
+      console.log('[NoteUI] Search completed successfully, found', notes.length, 'notes');
       this.renderNoteList(notes);
     } catch (error) {
       console.error('Search notes failed:', error);
-      document.getElementById('note-list-content').innerHTML = `<div class="error-message">Search failed: ${error.message}</div>`;
+      console.error('Search URL that failed:', error.url || 'URL not available');
+      console.error('HTTP status:', error.status || 'Status not available');
+      
+      let errorMessage = 'Search failed: ';
+      if (error.message.includes('404')) {
+        errorMessage += 'Search endpoint not found. Please check if the backend server is running and the search API is available.';
+      } else if (error.message.includes('500')) {
+        errorMessage += 'Server error occurred during search. Please try again.';
+      } else {
+        errorMessage += error.message;
+      }
+      
+      document.getElementById('note-list-content').innerHTML = `<div class="error-message">${errorMessage}</div>`;
     }
   }
 

@@ -83,9 +83,9 @@ export class NoteManager {
       const result = await response.json();
 
       if (result.success) {
-        // 更新缓存
-        this.invalidateCache(plantId);
-        console.log(`植物笔记创建成功: ${result.data.noteId}`);
+        // 🔧 FIX: Force complete cache clear for immediate visibility of new note
+        this.clearCache();
+        console.log(`植物笔记创建成功: ${result.data.noteId} - 缓存已完全清除`);
         return result.data.noteId;
       }
 
@@ -125,9 +125,9 @@ export class NoteManager {
       const result = await response.json();
 
       if (result.success) {
-        // 更新缓存
-        this.invalidateCache(plantId, imageId);
-        console.log(`图像笔记创建成功: ${result.data.noteId}`);
+        // 🔧 FIX: Force complete cache clear for immediate visibility of new note
+        this.clearCache();
+        console.log(`图像笔记创建成功: ${result.data.noteId} - 缓存已完全清除`);
         return result.data.noteId;
       }
 
@@ -411,10 +411,17 @@ export class NoteManager {
         searchParams.append('author', filters.author);
       }
 
-      const response = await fetch(`${this.httpManager.baseUrl}/notes/search?${searchParams}`);
+      const searchUrl = `${this.httpManager.baseUrl}/notes/search?${searchParams}`;
+      console.log('[NoteManager] Making search request to:', searchUrl);
+      
+      const response = await fetch(searchUrl);
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+        error.url = searchUrl;
+        error.status = response.status;
+        console.error('[NoteManager] Search request failed:', error);
+        throw error;
       }
 
       const result = await response.json();
