@@ -340,6 +340,13 @@ export class NoteManager {
       });
 
       if (!response.ok) {
+        // 🔧 FIX: Handle 404 gracefully - note may already be deleted
+        if (response.status === 404) {
+          console.warn(`笔记 ${noteId} 不存在或已被删除`);
+          // Clear cache and return success since the goal (note not existing) is achieved
+          this.clearCache();
+          return true;
+        }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
@@ -462,7 +469,14 @@ export class NoteManager {
    */
   clearCache() {
     this.notes.clear();
-    console.log('笔记缓存已清除');
+    this.cacheTimestamps.clear();
+    this.noteCounts.clear();
+    
+    // 🔧 FIX: Clear bulk data cache to prevent stale data issues
+    this.bulkNoteData = null;
+    this.bulkDataTimestamp = 0;
+    
+    console.log('笔记缓存已完全清除 (包括批量数据缓存)');
   }
 
   /**

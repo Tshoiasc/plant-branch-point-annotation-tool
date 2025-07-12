@@ -37,7 +37,7 @@
   
   /* 间距 */
   --spacing-xs: 0.25rem;
-  --spacing-sm: 0.5rem;
+  --spacing-sm: 0.7rem;
   --spacing-md: 1rem;
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
@@ -232,6 +232,7 @@ body {
 }
 
 .progress-percentage {
+  margin-left:  var(--spacing-sm);
   font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--primary-color);
@@ -3352,4 +3353,56 @@ body {
   .image-note-badge {
     display: none !important;
   }
-} 
+} /* Note count display styles */
+.note-count-display {
+  color: #059669;
+  font-weight: bold;
+  margin-left: 5px;
+  font-size: var(--font-size-sm);
+}
+
+.note-count-overlay {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: #dc2626;
+  color: white;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  line-height: 1;
+}
+
+/* Image note badge improvements */
+.image-note-badge {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.image-note-count {
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: bold;
+  display: inline-block;
+}
+
+/* Button positioning improvements */
+#plant-note-btn {
+  position: relative;
+}
+
+#image-note-btn {
+  position: relative;
+}
+

@@ -159,7 +159,7 @@ export class NoteUI {
   createNoteButtons() {
     this.createPlantNoteButton();
     this.createImageNoteButton();
-    this.createNoteDisplayAreas();
+    // 🔧 REMOVED: Note display areas no longer needed - counts shown in buttons
   }
 
   /**
@@ -193,20 +193,21 @@ export class NoteUI {
       toolbarSection.appendChild(noteContainer);
     }
     
-    // Create the button
+    // Create the button with note count display
     const noteBtn = document.createElement('button');
     noteBtn.id = 'plant-note-btn';
     noteBtn.className = 'btn btn-small btn-secondary';
-    noteBtn.innerHTML = '📝 Plant Notes';
+    noteBtn.innerHTML = '📝 Plant Notes <span id="plant-note-count" class="note-count-display"></span>';
     noteBtn.title = 'View or add plant notes';
     noteBtn.style.cssText = `
       display: none;
       width: 100%;
       margin-bottom: 5px;
+      position: relative;
     `;
     noteContainer.appendChild(noteBtn);
     
-    console.log('[NoteUI] Plant notes button created in toolbar');
+    console.log('[NoteUI] Plant notes button created in toolbar with count display');
   }
   
   /**
@@ -257,11 +258,11 @@ export class NoteUI {
       existingBtn.remove();
     }
     
-    // Create the icon button to match annotation controls style
+    // Create the icon button to match annotation controls style with count display
     const noteBtn = document.createElement('button');
     noteBtn.id = 'image-note-btn';
     noteBtn.className = 'btn btn-icon';
-    noteBtn.innerHTML = '📝';
+    noteBtn.innerHTML = '📝<span id="image-note-count" class="note-count-overlay"></span>';
     noteBtn.title = 'View or add image notes';
     noteBtn.style.cssText = `
       display: none;
@@ -275,12 +276,13 @@ export class NoteUI {
       pointer-events: auto;
       cursor: pointer;
       border-radius: 0.375rem;
+      position: relative;
     `;
     
     // Add to annotation controls
     annotationControls.appendChild(noteBtn);
     
-    console.log('[NoteUI] Image notes button created in annotation controls');
+    console.log('[NoteUI] Image notes button created in annotation controls with count display');
   }
   
   /**
@@ -316,112 +318,6 @@ export class NoteUI {
   }
 
   /**
-   * Create note display areas
-   */
-  createNoteDisplayAreas() {
-    this.createPlantNoteDisplay();
-    this.createImageNoteDisplay();
-  }
-
-  /**
-   * Create plant note display area
-   */
-  createPlantNoteDisplay() {
-    const existingDisplay = document.getElementById('plant-note-display');
-    if (existingDisplay) {
-      existingDisplay.remove();
-    }
-    
-    const display = document.createElement('div');
-    display.id = 'plant-note-display';
-    display.className = 'note-display collapsible';
-    display.style.cssText = `
-      position: fixed;
-      bottom: 20px;
-      left: 20px;
-      width: 300px;
-      max-height: 200px;
-      background: rgba(255, 255, 255, 0.95);
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-      overflow-y: auto;
-      z-index: 1000;
-      display: none;
-      transition: all 0.3s ease;
-      resize: both;
-      min-width: 250px;
-      min-height: 100px;
-      max-width: 500px;
-    `;
-    
-    display.innerHTML = `
-      <div class="note-display-header draggable-header">
-        <h4>Plant Notes</h4>
-        <div class="note-display-controls">
-          <button class="minimize-btn" title="Minimize">−</button>
-          <button class="close-btn" title="Close"></button>
-        </div>
-      </div>
-      <div class="note-display-content">
-        <div class="note-loading">Loading...</div>
-      </div>
-    `;
-    
-    document.body.appendChild(display);
-    this.makeDraggable(display);
-  }
-
-  /**
-   * Create image note display area
-   */
-  createImageNoteDisplay() {
-    const existingDisplay = document.getElementById('image-note-display');
-    if (existingDisplay) {
-      existingDisplay.remove();
-    }
-    
-    const display = document.createElement('div');
-    display.id = 'image-note-display';
-    display.className = 'note-display collapsible';
-    display.style.cssText = `
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      width: 300px;
-      max-height: 200px;
-      background: rgba(255, 255, 255, 0.95);
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-      overflow-y: auto;
-      z-index: 1000;
-      display: none;
-      transition: all 0.3s ease;
-      resize: both;
-      min-width: 250px;
-      min-height: 100px;
-      max-width: 500px;
-    `;
-    
-    display.innerHTML = `
-      <div class="note-display-header draggable-header">
-        <h4>Image Notes</h4>
-        <div class="note-display-controls">
-          <button class="minimize-btn" title="Minimize">−</button>
-          <button class="close-btn" title="Close"></button>
-        </div>
-      </div>
-      <div class="note-display-content">
-        <div class="note-loading">Loading...</div>
-      </div>
-    `;
-    
-    document.body.appendChild(display);
-    this.makeDraggable(display);
-  }
-
-  /**
    * Setup event listeners
    */
   setupEventListeners() {
@@ -430,7 +326,7 @@ export class NoteUI {
       this.setupModalEventListeners();
       this.setupButtonEventListeners();
       this.setupInputEventListeners();
-      this.setupNoteDisplayEventListeners();
+      // 🔧 REMOVED: Note display event listeners no longer needed
     }, 200);
   }
 
@@ -555,110 +451,6 @@ export class NoteUI {
   }
 
   /**
-   * Setup note display event listeners
-   */
-  setupNoteDisplayEventListeners() {
-    // Setup minimize and close button listeners for all note displays
-    document.querySelectorAll('.note-display').forEach(display => {
-      const minimizeBtn = display.querySelector('.minimize-btn');
-      const closeBtn = display.querySelector('.close-btn');
-      const content = display.querySelector('.note-display-content');
-      
-      if (minimizeBtn) {
-        minimizeBtn.addEventListener('click', () => {
-          const isMinimized = display.classList.contains('minimized');
-          if (isMinimized) {
-            // Restore
-            display.classList.remove('minimized');
-            content.style.display = 'block';
-            minimizeBtn.textContent = '−';
-            minimizeBtn.title = 'Minimize';
-          } else {
-            // Minimize
-            display.classList.add('minimized');
-            content.style.display = 'none';
-            minimizeBtn.textContent = '+';
-            minimizeBtn.title = 'Restore';
-          }
-        });
-      }
-      
-      if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-          display.style.display = 'none';
-        });
-      }
-    });
-  }
-
-  /**
-   * Make note display draggable
-   */
-  makeDraggable(element) {
-    const header = element.querySelector('.draggable-header');
-    if (!header) return;
-    
-    let isDragging = false;
-    let currentX;
-    let currentY;
-    let initialX;
-    let initialY;
-    let xOffset = 0;
-    let yOffset = 0;
-    
-    header.style.cursor = 'move';
-    header.style.userSelect = 'none';
-    
-    header.addEventListener('mousedown', dragStart);
-    document.addEventListener('mousemove', drag);
-    document.addEventListener('mouseup', dragEnd);
-    
-    function dragStart(e) {
-      if (e.target.tagName === 'BUTTON') return; // Don't drag when clicking buttons
-      
-      initialX = e.clientX - xOffset;
-      initialY = e.clientY - yOffset;
-      
-      if (e.target === header || header.contains(e.target)) {
-        isDragging = true;
-        element.style.cursor = 'grabbing';
-      }
-    }
-    
-    function drag(e) {
-      if (isDragging) {
-        e.preventDefault();
-        currentX = e.clientX - initialX;
-        currentY = e.clientY - initialY;
-        
-        xOffset = currentX;
-        yOffset = currentY;
-        
-        // Keep within viewport bounds
-        const rect = element.getBoundingClientRect();
-        const maxX = window.innerWidth - rect.width;
-        const maxY = window.innerHeight - rect.height;
-        
-        xOffset = Math.max(0, Math.min(xOffset, maxX));
-        yOffset = Math.max(0, Math.min(yOffset, maxY));
-        
-        setTranslate(xOffset, yOffset, element);
-      }
-    }
-    
-    function dragEnd() {
-      initialX = currentX;
-      initialY = currentY;
-      isDragging = false;
-      element.style.cursor = 'default';
-    }
-    
-    function setTranslate(xPos, yPos, el) {
-      el.style.transform = `translate(${xPos}px, ${yPos}px)`;
-    }
-  }
-
-  /**
    * Show plant notes
    */
   async showPlantNotes() {
@@ -752,6 +544,7 @@ export class NoteUI {
       }
 
       this.renderNoteList(notes);
+      console.log(`[NoteUI] Modal refreshed with ${notes.length} notes`);
     } catch (error) {
       console.error('Failed to load note list:', error);
       listContainer.innerHTML = `<div class="error-message">Loading failed: ${error.message}</div>`;
@@ -901,53 +694,57 @@ export class NoteUI {
 
     try {
       if (this.isEditMode && this.currentNote) {
+        console.log(`[NoteUI] Updating note: ${this.currentNote.noteId}`);
         await this.noteManager.updateNote(this.currentNote.noteId, noteData);
-        console.log('Note updated successfully');
+        console.log('[NoteUI] Note updated successfully');
       } else {
+        console.log('[NoteUI] Creating new note...');
         if (this.currentImageId) {
+          console.log(`[NoteUI] Creating image note for ${this.currentPlantId}/${this.currentImageId}`);
           await this.noteManager.addImageNote(this.currentPlantId, this.currentImageId, noteData);
         } else {
+          console.log(`[NoteUI] Creating plant note for ${this.currentPlantId}`);
           await this.noteManager.addPlantNote(this.currentPlantId, noteData);
         }
-        console.log('Note created successfully');
+        console.log('[NoteUI] Note created successfully');
       }
 
       this.closeNoteModal();
       
+      // 🔧 FIX: Add small delay to ensure backend processing completes
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       // 🔧 FIX: Force immediate cache clear to ensure fresh data
-      console.log('[NoteUI] Note saved, forcing cache clear for fresh data...');
+      console.log('[NoteUI] Note saved, forcing complete cache clear for fresh data...');
       if (this.noteManager.clearCache) {
         this.noteManager.clearCache();
-        console.log('[NoteUI] Note manager cache cleared');
+        console.log('[NoteUI] Note manager cache completely cleared');
       }
       
       // 🔧 FIX: Always refresh the note list modal regardless of visibility to show new note
       const listModal = document.getElementById('note-list-modal');
-      if (listModal) {
+      if (listModal && listModal.style.display !== 'none') {
         console.log('[NoteUI] Refreshing note list to show new/updated note');
         await this.loadNoteList();
-        console.log('[NoteUI] Note list refreshed');
+        console.log('[NoteUI] Note list refreshed with fresh data');
       }
 
-      // 🔧 FIX: 立即刷新植物笔记徽章和图像笔记徽章
+      // 🔧 FIX: 立即刷新植物笔记徽章和图像笔记徽章，以及按钮计数
       if (this.currentPlantId) {
-        console.log('[NoteUI] 笔记保存完成，立即刷新徽章...');
+        console.log('[NoteUI] 笔记保存完成，立即刷新徽章和按钮...');
         
-        // 立即刷新植物笔记徽章
+        // 立即刷新植物笔记徽章和按钮
         await this.updatePlantNoteBadge(this.currentPlantId);
+        await this.updatePlantNoteButton(this.currentPlantId);
         
-        // 如果是图像笔记，也刷新图像笔记徽章
+        // 如果是图像笔记，也刷新图像笔记徽章和按钮
         if (this.currentImageId) {
-          // 调用全局函数刷新图像笔记计数
-          if (typeof loadImageNoteCount === 'function') {
-            await loadImageNoteCount(this.currentPlantId, this.currentImageId);
-            console.log('[NoteUI] 图像笔记徽章已刷新');
-          } else {
-            console.warn('[NoteUI] loadImageNoteCount function not available');
-          }
+          await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
+          await this.refreshThumbnailNoteBadge(this.currentPlantId, this.currentImageId);
+          console.log('[NoteUI] 图像笔记徽章和按钮已刷新');
         }
         
-        console.log('[NoteUI] 笔记徽章刷新完成');
+        console.log('[NoteUI] 笔记徽章和按钮刷新完成');
       }
 
     } catch (error) {
@@ -981,40 +778,64 @@ export class NoteUI {
     }
 
     try {
+      console.log(`[NoteUI] Attempting to delete note: ${noteId}`);
       await this.noteManager.deleteNote(noteId);
-      console.log('Note deleted successfully');
+      console.log('[NoteUI] Note deletion successful');
+      
+      // 🔧 FIX: Add small delay to ensure cache clearing completes
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // 🔧 FIX: Force immediate cache clear and refresh for deletion
-      console.log('[NoteUI] Note deleted, forcing cache clear and refresh...');
+      console.log('[NoteUI] Note deleted, forcing complete cache clear and refresh...');
       
-      // Force clear cache to ensure fresh data
+      // Double-ensure cache is cleared
       if (this.noteManager.clearCache) {
         this.noteManager.clearCache();
-        console.log('[NoteUI] Note manager cache cleared');
+        console.log('[NoteUI] Note manager cache cleared after deletion');
       }
       
-      // Immediately refresh note list in modal
+      // Immediately refresh note list in modal with fresh data
       await this.loadNoteList();
       console.log('[NoteUI] Note list refreshed after deletion');
       
-      // 🔧 FIX: Immediately refresh all related badges after deletion
+      // 🔧 FIX: Immediately refresh all related badges and buttons after deletion
       if (this.currentPlantId) {
-        console.log('[NoteUI] Refreshing badges after note deletion...');
+        console.log('[NoteUI] Refreshing badges and buttons after note deletion...');
         
-        // Refresh plant note badge with forced cache bypass
+        // Force refresh plant note badge and button with bypassed cache
         await this.updatePlantNoteBadge(this.currentPlantId);
+        await this.updatePlantNoteButton(this.currentPlantId);
         
-        // If there's a current image, also refresh image note badge
-        if (this.currentImageId && typeof loadImageNoteCount === 'function') {
-          await loadImageNoteCount(this.currentPlantId, this.currentImageId);
-          console.log('[NoteUI] Image note badge refreshed after deletion');
+        // If there's a current image, also refresh image note badge and button
+        if (this.currentImageId) {
+          await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
+          await this.refreshThumbnailNoteBadge(this.currentPlantId, this.currentImageId);
+          console.log('[NoteUI] Image note badge and button refreshed after deletion');
         }
         
-        console.log('[NoteUI] All badges refreshed after deletion');
+        console.log('[NoteUI] All badges and buttons refreshed after deletion');
       }
     } catch (error) {
       console.error('Delete note failed:', error);
-      alert('Delete failed: ' + error.message);
+      
+      // 🔧 FIX: Improved error handling for different error types
+      let errorMessage = 'Delete failed: ';
+      if (error.message.includes('404') || error.message.includes('不存在')) {
+        errorMessage += 'Note was already deleted or does not exist.';
+        // Still refresh the modal to show current state
+        console.log('[NoteUI] Note already deleted, refreshing modal to show current state...');
+        if (this.noteManager.clearCache) {
+          this.noteManager.clearCache();
+        }
+        await this.loadNoteList();
+        if (this.currentPlantId) {
+          await this.updatePlantNoteBadge(this.currentPlantId);
+        }
+      } else {
+        errorMessage += error.message;
+      }
+      
+      alert(errorMessage);
     }
   }
 
@@ -1093,13 +914,12 @@ export class NoteUI {
       plantNoteContainer.style.display = plantId ? 'block' : 'none';
     }
     
-    // Auto load and display plant notes
+    // Update plant note button count and badge
     if (plantId) {
-      this.loadAndDisplayPlantNotes(plantId);
-      // Update plant note badge - should always be visible when notes exist
+      this.updatePlantNoteButton(plantId);
       this.updatePlantNoteBadge(plantId);
     } else {
-      this.hideNoteDisplay('plant-note-display');
+      this.updatePlantNoteButton(null);
     }
   }
 
@@ -1134,17 +954,112 @@ export class NoteUI {
       imageNoteContainer.style.display = shouldShow ? 'block' : 'none';
     }
     
-    // Auto load and display image notes
+    // Update image note button count and refresh thumbnail badge
     if (this.currentPlantId && imageId) {
-      this.loadAndDisplayImageNotes(this.currentPlantId, imageId);
+      this.updateImageNoteButton(this.currentPlantId, imageId);
+      this.refreshThumbnailNoteBadge(this.currentPlantId, imageId);
     } else {
-      this.hideNoteDisplay('image-note-display');
+      this.updateImageNoteButton(null, null);
     }
   }
 
   /**
-   * Update plant note badge to show note count
+   * Update plant note button count display
    */
+  async updatePlantNoteButton(plantId) {
+    const plantNoteCountElement = document.getElementById('plant-note-count');
+    if (!plantNoteCountElement) return;
+    
+    if (!plantId) {
+      plantNoteCountElement.textContent = '';
+      return;
+    }
+    
+    try {
+      const notes = await this.noteManager.getPlantNotes(plantId);
+      const count = notes ? notes.length : 0;
+      
+      if (count > 0) {
+        plantNoteCountElement.textContent = `(${count})`;
+        plantNoteCountElement.style.cssText = `
+          color: #059669;
+          font-weight: bold;
+          margin-left: 5px;
+        `;
+      } else {
+        plantNoteCountElement.textContent = '';
+      }
+      
+      console.log(`[NoteUI] Plant note button updated: ${count} notes`);
+    } catch (error) {
+      console.error('Failed to update plant note button:', error);
+      plantNoteCountElement.textContent = '';
+    }
+  }
+
+  /**
+   * Update image note button count display
+   */
+  async updateImageNoteButton(plantId, imageId) {
+    const imageNoteCountElement = document.getElementById('image-note-count');
+    if (!imageNoteCountElement) return;
+    
+    if (!plantId || !imageId) {
+      imageNoteCountElement.textContent = '';
+      imageNoteCountElement.style.display = 'none';
+      return;
+    }
+    
+    try {
+      const notes = await this.noteManager.getImageNotes(plantId, imageId);
+      const count = notes ? notes.length : 0;
+      
+      if (count > 0) {
+        imageNoteCountElement.textContent = count;
+        imageNoteCountElement.style.cssText = `
+          position: absolute;
+          top: -5px;
+          right: -5px;
+          background: #dc2626;
+          color: white;
+          border-radius: 50%;
+          width: 16px;
+          height: 16px;
+          font-size: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+        `;
+      } else {
+        imageNoteCountElement.textContent = '';
+        imageNoteCountElement.style.display = 'none';
+      }
+      
+      console.log(`[NoteUI] Image note button updated: ${count} notes`);
+    } catch (error) {
+      console.error('Failed to update image note button:', error);
+      imageNoteCountElement.textContent = '';
+      imageNoteCountElement.style.display = 'none';
+    }
+  }
+
+  /**
+   * Refresh thumbnail note badge for specific image
+   */
+  async refreshThumbnailNoteBadge(plantId, imageId) {
+    try {
+      // Call the global function to refresh thumbnail badge
+      if (typeof loadImageNoteCount === 'function') {
+        await loadImageNoteCount(plantId, imageId);
+        console.log(`[NoteUI] Thumbnail note badge refreshed for ${imageId}`);
+      } else {
+        console.warn('[NoteUI] loadImageNoteCount function not available');
+      }
+    } catch (error) {
+      console.error('Failed to refresh thumbnail note badge:', error);
+    }
+  }
   async updatePlantNoteBadge(plantId) {
     if (!plantId) return;
     
@@ -1511,63 +1426,6 @@ export class NoteUI {
   }
 
   /**
-   * Load and display plant notes
-   */
-  async loadAndDisplayPlantNotes(plantId) {
-    try {
-      const notes = await this.noteManager.getPlantNotes(plantId);
-      this.displayNotes('plant-note-display', notes, 'Plant Notes');
-    } catch (error) {
-      console.error('Failed to load plant notes:', error);
-    }
-  }
-
-  /**
-   * Load and display image notes
-   */
-  async loadAndDisplayImageNotes(plantId, imageId) {
-    try {
-      const notes = await this.noteManager.getImageNotes(plantId, imageId);
-      this.displayNotes('image-note-display', notes, 'Image Notes');
-    } catch (error) {
-      console.error('Failed to load image notes:', error);
-    }
-  }
-
-  /**
-   * Display notes in specified area
-   */
-  displayNotes(displayId, notes, title) {
-    const display = document.getElementById(displayId);
-    if (!display) return;
-
-    const content = display.querySelector('.note-display-content');
-    if (!content) return;
-
-    if (!notes || notes.length === 0) {
-      content.innerHTML = '<div class="note-empty">No notes available</div>';
-      display.style.display = 'none';
-      return;
-    }
-
-    // Only show the latest 3 notes
-    const recentNotes = notes.slice(0, 3);
-    const noteHtml = recentNotes.map(note => {
-      const formattedNote = this.noteManager.formatNoteForDisplay(note);
-      return `
-        <div class="note-item-mini">
-          <div class="note-title-mini">${this.escapeHtml(formattedNote.title)}</div>
-          <div class="note-content-mini">${this.escapeHtml(formattedNote.shortContent)}</div>
-          <div class="note-time-mini">${formattedNote.formattedTimestamp}</div>
-        </div>
-      `;
-    }).join('');
-
-    content.innerHTML = noteHtml;
-    display.style.display = 'block';
-  }
-
-  /**
    * Show user-friendly error message
    */
   showUserError(title, message) {
@@ -1581,16 +1439,6 @@ export class NoteUI {
   }
 
   /**
-   * Hide note display area
-   */
-  hideNoteDisplay(displayId) {
-    const display = document.getElementById(displayId);
-    if (display) {
-      display.style.display = 'none';
-    }
-  }
-
-  /**
    * Clean up resources
    */
   cleanup() {
@@ -1599,9 +1447,8 @@ export class NoteUI {
       'note-modal',
       'note-list-modal',
       'plant-note-btn',
-      'image-note-btn',
-      'plant-note-display',
-      'image-note-display'
+      'image-note-btn'
+      // 🔧 REMOVED: Note display elements no longer exist
     ];
 
     elementsToRemove.forEach(id => {

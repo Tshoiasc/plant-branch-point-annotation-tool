@@ -788,18 +788,31 @@ async function loadImageNoteCount(plantId, imageId) {
     
     const noteManager = window.PlantAnnotationTool.noteManager;
     const notes = await noteManager.getImageNotes(plantId, imageId);
+    const noteCount = notes ? notes.length : 0;
     
-    if (notes && notes.length > 0) {
-      const badge = document.getElementById(`image-note-badge-${imageId}`);
-      if (badge) {
-        badge.innerHTML = `<span class="image-note-count">📝 ${notes.length}</span>`;
+    const badge = document.getElementById(`image-note-badge-${imageId}`);
+    if (badge) {
+      if (noteCount > 0) {
+        badge.innerHTML = `<span class="image-note-count">📝 ${noteCount}</span>`;
         badge.style.display = 'inline-block';
         badge.className = 'image-note-badge';
+      } else {
+        // 🔧 FIX: Clear badge when no notes exist
+        badge.innerHTML = '';
+        badge.style.display = 'none';
       }
+      console.log(`[Thumbnail] Badge updated for ${imageId}: ${noteCount} notes`);
     }
   } catch (error) {
     // Silently handle errors - note loading is not critical for UI
     console.debug(`Note loading failed for image ${imageId}:`, error.message);
+    
+    // 🔧 FIX: Clear badge on error to prevent stale data
+    const badge = document.getElementById(`image-note-badge-${imageId}`);
+    if (badge) {
+      badge.innerHTML = '';
+      badge.style.display = 'none';
+    }
   }
 }
 
