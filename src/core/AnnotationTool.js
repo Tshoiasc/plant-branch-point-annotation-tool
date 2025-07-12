@@ -1476,6 +1476,12 @@ export class AnnotationTool {
    * 添加带方向的标注点
    */
   addKeypointWithDirection(x, y, direction) {
+    // 🔧 FIX: Ensure image is loaded before creating keypoints
+    if (!this.imageElement || !this.imageLoaded) {
+      console.warn('[AnnotationTool] Cannot add keypoint: no image loaded');
+      return;
+    }
+
     // 找到最小的缺失编号
     const order = this.findNextAvailableOrder();
 
