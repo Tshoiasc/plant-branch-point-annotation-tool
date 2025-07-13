@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Annotation Bounds Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 800px;
+        }
+        .test-info {
+            background: #e8f4fd;
+            border: 1px solid #bee5f7;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .test-steps {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+        }
+        .test-steps ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .test-steps li {
+            margin-bottom: 8px;
+        }
+        .fix-summary {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .cursor-demo {
+            display: inline-block;
+            padding: 4px 8px;
+            margin: 2px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .cursor-valid { background: #d4edda; color: #155724; }
+        .cursor-invalid { background: #f8d7da; color: #721c24; }
+        .cursor-hover { background: #fff3cd; color: #856404; }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🔧 Annotation Bounds Fix - Test Guide</h1>
+        
+        <div class="test-info">
+            <h3>Issue Fixed:</h3>
+            <p><strong>Problem:</strong> Users could place annotations outside the image area in blank canvas space</p>
+            <p><strong>Solution:</strong> Added comprehensive bounds checking to prevent annotations outside visible image boundaries</p>
+        </div>
+
+        <div class="test-steps">
+            <h3>Testing Steps:</h3>
+            <ol>
+                <li><strong>Load the main application</strong> and select a plant with images</li>
+                <li><strong>Open an image</strong> in the annotation workspace</li>
+                <li><strong>Zoom out</strong> so there's gray/empty space around the image</li>
+                <li><strong>Try clicking in empty areas</strong> around the image:
+                    <ul>
+                        <li>✅ Should show <span class="cursor-demo cursor-invalid">not-allowed cursor</span></li>
+                        <li>✅ Should NOT create annotation points</li>
+                        <li>✅ Should show error message if attempted</li>
+                    </ul>
+                </li>
+                <li><strong>Click directly on the image</strong>:
+                    <ul>
+                        <li>✅ Should show <span class="cursor-demo cursor-valid">crosshair cursor</span></li>
+                        <li>✅ Should create annotation points normally</li>
+                    </ul>
+                </li>
+                <li><strong>Hover over existing annotations</strong>:
+                    <ul>
+                        <li>✅ Should show <span class="cursor-demo cursor-hover">pointer cursor</span></li>
+                    </ul>
+                </li>
+                <li><strong>Try dragging annotations</strong> outside image boundaries:
+                    <ul>
+                        <li>✅ Should constrain movement to stay within image</li>
+                        <li>✅ Should ignore drag movements outside valid area</li>
+                    </ul>
+                </li>
+            </ol>
+        </div>
+
+        <div class="fix-summary">
+            <h3>🎯 Fix Implementation Summary:</h3>
+            <ul>
+                <li><strong>Added bounds validation methods:</strong>
+                    <ul>
+                        <li><code>getVisibleImageBounds()</code> - Calculates visible image area</li>
+                        <li><code>isPointInVisibleImage()</code> - Checks screen coordinates</li>
+                        <li><code>isImageCoordinateValid()</code> - Validates image coordinates</li>
+                        <li><code>canCreateAnnotationAt()</code> - Comprehensive validation</li>
+                    </ul>
+                </li>
+                <li><strong>Updated annotation creation methods:</strong>
+                    <ul>
+                        <li><code>createNoDirectionKeypoint()</code> - Click annotations</li>
+                        <li><code>addKeypoint()</code> - Programmatic annotations</li>
+                        <li><code>startDirectionAnnotation()</code> - Direction annotations</li>
+                    </ul>
+                </li>
+                <li><strong>Enhanced user feedback:</strong>
+                    <ul>
+                        <li>Visual cursor feedback (crosshair vs not-allowed)</li>
+                        <li>Error messages for invalid positions</li>
+                        <li>Constrained dragging within image bounds</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+
+        <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
+            <p><strong>Note:</strong> This fix ensures data quality by preventing meaningless annotations outside the actual image content while maintaining a smooth user experience with clear visual feedback.</p>
+        </div>
+    </div>
+
+    <script>
+        console.log('🔧 Annotation Bounds Fix Test Page Loaded');
+        console.log('📋 Use the steps above to verify the fix works correctly');
+        
+        // Add some interactivity for demonstration
+        document.addEventListener('DOMContentLoaded', function() {
+            const cursors = document.querySelectorAll('.cursor-demo');
+            cursors.forEach(cursor => {
+                cursor.addEventListener('mouseenter', function() {
+                    if (this.classList.contains('cursor-valid')) {
+                        this.style.cursor = 'crosshair';
+                    } else if (this.classList.contains('cursor-invalid')) {
+                        this.style.cursor = 'not-allowed';
+                    } else if (this.classList.contains('cursor-hover')) {
+                        this.style.cursor = 'pointer';
+                    }
+                });
+                cursor.addEventListener('mouseleave', function() {
+                    this.style.cursor = 'default';
+                });
+            });
+        });
+    </script>
+</body>
+</html>

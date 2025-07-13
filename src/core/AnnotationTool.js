@@ -662,6 +662,94 @@ export class AnnotationTool {
   }
 
   /**
+   * 🔧 NEW: Calculate the visible image bounds in screen coordinates
+   */
+  getVisibleImageBounds() {
+    if (!this.imageElement || !this.imageLoaded) {
+      return null;
+    }
+
+    // Image dimensions in screen space
+    const imageWidth = this.imageElement.width * this.state.scale;
+    const imageHeight = this.imageElement.height * this.state.scale;
+    
+    // Image position in screen space (top-left corner)
+    const imageLeft = this.state.translateX;
+    const imageTop = this.state.translateY;
+    
+    // Calculate visible bounds (intersection with canvas)
+    const visibleBounds = {
+      left: Math.max(0, imageLeft),
+      top: Math.max(0, imageTop),
+      right: Math.min(this.canvas.width, imageLeft + imageWidth),
+      bottom: Math.min(this.canvas.height, imageTop + imageHeight),
+      // Also store the full image bounds for reference
+      imageLeft,
+      imageTop,
+      imageRight: imageLeft + imageWidth,
+      imageBottom: imageTop + imageHeight
+    };
+    
+    return visibleBounds;
+  }
+
+  /**
+   * 🔧 NEW: Check if a screen point is within the visible image area
+   */
+  isPointInVisibleImage(screenX, screenY) {
+    const bounds = this.getVisibleImageBounds();
+    if (!bounds) {
+      return false;
+    }
+    
+    // Check if point is within the visible image area (intersection of image and canvas)
+    return screenX >= bounds.left && 
+           screenX <= bounds.right && 
+           screenY >= bounds.top && 
+           screenY <= bounds.bottom;
+  }
+
+  /**
+   * 🔧 NEW: Check if image coordinates are valid and within image boundaries
+   */
+  isImageCoordinateValid(imageX, imageY) {
+    if (!this.imageElement || !this.imageLoaded) {
+      return false;
+    }
+    
+    return imageX >= 0 && 
+           imageX <= this.imageElement.width && 
+           imageY >= 0 && 
+           imageY <= this.imageElement.height;
+  }
+
+  /**
+   * 🔧 NEW: Comprehensive bounds checking for annotation creation
+   */
+  canCreateAnnotationAt(screenX, screenY) {
+    // Check if image is loaded
+    if (!this.imageElement || !this.imageLoaded) {
+      console.warn('[AnnotationTool] Cannot create annotation: no image loaded');
+      return false;
+    }
+
+    // Check if point is within visible image area
+    if (!this.isPointInVisibleImage(screenX, screenY)) {
+      console.warn('[AnnotationTool] Cannot create annotation: position is outside visible image area');
+      return false;
+    }
+
+    // Double-check with image coordinates
+    const imagePos = this.screenToImage(screenX, screenY);
+    if (!this.isImageCoordinateValid(imagePos.x, imagePos.y)) {
+      console.warn('[AnnotationTool] Cannot create annotation: position is outside image boundaries');
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
    * 处理鼠标按下
    */
   handleMouseDown(event) {
@@ -769,16 +857,21 @@ export class AnnotationTool {
     } else if (this.draggedKeypoint) {
       // 拖拽标注点
       const imagePos = this.screenToImage(mousePos.x, mousePos.y);
-      this.draggedKeypoint.x = imagePos.x;
-      this.draggedKeypoint.y = imagePos.y;
-
-      // 标记已经进行了拖拽
-      this.state.wasDraggedDuringSession = true;
-
-      this.render();
-
-      // 通知预览管理器显示被拖动点对应的预览
-      this.notifyDraggedKeypointPreview(this.draggedKeypoint);
+      
+      // 🔧 FIX: Constrain dragged keypoint to stay within image boundaries
+      if (this.isImageCoordinateValid(imagePos.x, imagePos.y)) {
+        this.draggedKeypoint.x = imagePos.x;
+        this.draggedKeypoint.y = imagePos.y;
+        
+        // 标记已经进行了拖拽
+        this.state.wasDraggedDuringSession = true;
+        
+        this.render();
+        
+        // 通知预览管理器显示被拖动点对应的预览
+        this.notifyDraggedKeypointPreview(this.draggedKeypoint);
+      }
+      // If the position is invalid, don't update the keypoint position (ignore the movement)
       
     } else if (this.state.blankAreaClickStart) {
       // 检查是否开始了拖拽（从空白区域点击开始）
@@ -812,7 +905,14 @@ export class AnnotationTool {
       
       if (hoveredKeypoint !== this.hoveredKeypoint) {
         this.hoveredKeypoint = hoveredKeypoint;
-        this.canvas.style.cursor = hoveredKeypoint ? 'pointer' : 'crosshair';
+        // 🔧 FIX: Provide visual feedback for annotation boundaries
+        if (hoveredKeypoint) {
+          this.canvas.style.cursor = 'pointer';
+        } else {
+          // Check if mouse is within valid annotation area
+          const canAnnotate = this.canCreateAnnotationAt(mousePos.x, mousePos.y);
+          this.canvas.style.cursor = canAnnotate ? 'crosshair' : 'not-allowed';
+        }
         this.render();
       }
     }
@@ -895,11 +995,10 @@ export class AnnotationTool {
    * 创建无方向标注点
    */
   createNoDirectionKeypoint(mousePos) {
-    // 🔧 FIX: Prevent annotation creation when no image is loaded
-    if (!this.imageElement || !this.imageLoaded) {
-      console.warn('[AnnotationTool] Cannot create annotation: no image loaded');
+    // 🔧 FIX: Comprehensive bounds checking for annotation creation
+    if (!this.canCreateAnnotationAt(mousePos.x, mousePos.y)) {
       if (window.PlantAnnotationTool?.showError) {
-        window.PlantAnnotationTool.showError('No Image Loaded', 'Please select and load an image before creating annotations.');
+        window.PlantAnnotationTool.showError('Invalid Position', 'Annotations can only be placed within the image area. Please click directly on the image.');
       }
       return;
     }
@@ -1556,16 +1655,13 @@ export class AnnotationTool {
    * 添加标注点（向后兼容方法）
    */
   addKeypoint(screenPos, direction = 'right') {
-    if (!this.imageElement || !this.imageLoaded) return;
-    
-    const imagePos = this.screenToImage(screenPos.x, screenPos.y);
-    
-    // 检查是否在图像范围内
-    if (imagePos.x < 0 || imagePos.x > this.imageElement.width ||
-        imagePos.y < 0 || imagePos.y > this.imageElement.height) {
+    // 🔧 FIX: Use comprehensive bounds checking for annotation creation
+    if (!this.canCreateAnnotationAt(screenPos.x, screenPos.y)) {
+      console.warn('[AnnotationTool] Cannot add keypoint: position is outside valid annotation area');
       return;
     }
     
+    const imagePos = this.screenToImage(screenPos.x, screenPos.y);
     this.addKeypointWithDirection(imagePos.x, imagePos.y, direction);
   }
 
@@ -1881,15 +1977,15 @@ export class AnnotationTool {
    * 开始方向标注
    */
   startDirectionAnnotation(mousePos) {
-    if (!this.imageElement || !this.imageLoaded) return;
-    
-    const imagePos = this.screenToImage(mousePos.x, mousePos.y);
-    
-    // 检查是否在图像范围内
-    if (imagePos.x < 0 || imagePos.x > this.imageElement.width ||
-        imagePos.y < 0 || imagePos.y > this.imageElement.height) {
+    // 🔧 FIX: Use comprehensive bounds checking for direction annotation creation
+    if (!this.canCreateAnnotationAt(mousePos.x, mousePos.y)) {
+      if (window.PlantAnnotationTool?.showError) {
+        window.PlantAnnotationTool.showError('Invalid Position', 'Direction annotations can only be placed within the image area. Please click directly on the image.');
+      }
       return;
     }
+    
+    const imagePos = this.screenToImage(mousePos.x, mousePos.y);
     
     this.state.isDirectionDragging = true;
     this.state.dragStartPoint = mousePos;
