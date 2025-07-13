@@ -959,6 +959,32 @@ export class AnnotationTool {
     } else if (this.state.isDirectionSelectionMode) {
       // 方向选择模式下的鼠标移动
       this.state.directionSelectionPoint = mousePos;
+      
+      // 🔧 FIX: Proper cursor management for direction selection mode
+      let directionCursor = 'crosshair'; // Default for direction selection
+      
+      // Check if we're hovering over the selected keypoint for better UX
+      if (this.state.selectedKeypoint) {
+        const keypointScreen = this.imageToScreen(
+          this.state.selectedKeypoint.x,
+          this.state.selectedKeypoint.y
+        );
+        const distance = Math.sqrt(
+          Math.pow(mousePos.x - keypointScreen.x, 2) +
+          Math.pow(mousePos.y - keypointScreen.y, 2)
+        );
+        
+        // If hovering over the selected keypoint, show pointer cursor
+        if (distance <= (this.options.baseKeypointRadius * 2)) {
+          directionCursor = 'pointer';
+        }
+      }
+      
+      // Update cursor for direction selection mode
+      if (this.canvas.style.cursor !== directionCursor) {
+        this.canvas.style.cursor = directionCursor;
+      }
+      
       this.render();
       
     } else {
@@ -968,12 +994,23 @@ export class AnnotationTool {
       // 🔧 FIX: Always check cursor state for better responsiveness
       let newCursor = 'crosshair'; // Default cursor
       
-      if (hoveredKeypoint) {
-        newCursor = 'pointer';
+      // 🔧 FIX: Special handling for auto direction mode
+      if (this.state.isAutoDirectionMode) {
+        // In auto direction mode, provide different cursor feedback
+        if (hoveredKeypoint) {
+          newCursor = 'pointer'; // Can click keypoints in auto mode
+        } else {
+          newCursor = 'crosshair'; // Allow normal interaction in auto mode
+        }
       } else {
-        // Check if mouse is within valid annotation area
-        const canAnnotate = this.canAnnotateAtSilent(mousePos.x, mousePos.y);
-        newCursor = canAnnotate ? 'crosshair' : 'not-allowed';
+        // Normal mode cursor logic
+        if (hoveredKeypoint) {
+          newCursor = 'pointer';
+        } else {
+          // Check if mouse is within valid annotation area
+          const canAnnotate = this.canAnnotateAtSilent(mousePos.x, mousePos.y);
+          newCursor = canAnnotate ? 'crosshair' : 'not-allowed';
+        }
       }
       
       // Update cursor if it changed
@@ -1121,6 +1158,9 @@ export class AnnotationTool {
       isAutoDirectionMode: this.state.isAutoDirectionMode
     });
 
+    // 🔧 FIX: Set appropriate cursor for direction selection mode
+    this.canvas.style.cursor = 'crosshair';
+
     // 通知预览管理器显示这个点的预览
     this.notifySelectedKeypointPreview(keypoint);
 
@@ -1235,6 +1275,15 @@ export class AnnotationTool {
     } else if (this.state.isAutoDirectionMode) {
       console.log('[调试] 自动模式中取消方向选择，但保持自动模式');
       // 在自动模式下，只是清除当前选择，不退出自动模式
+    }
+
+    // 🔧 FIX: Reset cursor to appropriate state when exiting direction selection
+    if (this.state.isAutoDirectionMode) {
+      // In auto mode, maintain crosshair cursor
+      this.canvas.style.cursor = 'crosshair';
+    } else {
+      // In normal mode, reset to default crosshair
+      this.canvas.style.cursor = 'crosshair';
     }
 
     this.restoreNormalPreview();
