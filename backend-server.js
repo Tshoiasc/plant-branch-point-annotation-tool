@@ -1616,6 +1616,206 @@ app.delete('/api/annotations/bulk', async (req, res) => {
   }
 });
 
+// 🔧 NEW: Delete all annotations for a specific plant
+app.delete('/api/annotations/plant/:plantId', async (req, res) => {
+  try {
+    const { plantId } = req.params;
+    console.log(`[Plant Deletion API] 开始删除植物 ${plantId} 的所有标注数据`);
+    
+    const annotationsDir = await ensureAnnotationsDirectory();
+    const timestamp = Date.now();
+    
+    // Step 1: Find all annotation files belonging to this plant
+    const files = await fs.readdir(annotationsDir);
+    const plantAnnotationFiles = [];
+    const relatedFiles = [];
+    
+    for (const file of files) {
+      if (file.startsWith(plantId)) {
+        if (file.endsWith('.json') && !file.includes('_backup_') && !file.includes('_deleted_')) {
+          if (file.includes('_status.json') || file.includes('_skip_info.json')) {
+            relatedFiles.push(file);
+          } else {
+            plantAnnotationFiles.push(file);
+          }
+        }
+      }
+    }
+    
+    console.log(`[Plant Deletion API] 找到 ${plantAnnotationFiles.length} 个标注文件和 ${relatedFiles.length} 个相关文件`);
+    
+    // Step 2: Create comprehensive backup
+    const backupDir = path.join(annotationsDir, `plant_${plantId}_deleted_backup_${timestamp}`);
+    await fs.mkdir(backupDir, { recursive: true });
+    
+    const backupStats = {
+      annotationFilesBackedUp: 0,
+      relatedFilesBackedUp: 0,
+      backupPath: backupDir
+    };
+    
+    // Backup annotation files
+    for (const file of plantAnnotationFiles) {
+      const sourcePath = path.join(annotationsDir, file);
+      const backupPath = path.join(backupDir, file);
+      await fs.copyFile(sourcePath, backupPath);
+      backupStats.annotationFilesBackedUp++;
+    }
+    
+    // Backup related files
+    for (const file of relatedFiles) {
+      const sourcePath = path.join(annotationsDir, file);
+      const backupPath = path.join(backupDir, file);
+      try {
+        await fs.copyFile(sourcePath, backupPath);
+        backupStats.relatedFilesBackedUp++;
+      } catch (error) {
+        console.warn(`[Plant Deletion API] 备份相关文件失败: ${file}`, error.message);
+      }
+    }
+    
+    console.log(`[Plant Deletion API] 备份完成: ${backupStats.annotationFilesBackedUp} 个标注文件, ${backupStats.relatedFilesBackedUp} 个相关文件`);
+    
+    // Step 3: Delete annotation files atomically
+    const deletionStats = {
+      annotationFilesDeleted: 0,
+      relatedFilesDeleted: 0,
+      errors: []
+    };
+    
+    // Delete annotation files
+    for (const file of plantAnnotationFiles) {
+      try {
+        const filePath = path.join(annotationsDir, file);
+        await fs.unlink(filePath);
+        deletionStats.annotationFilesDeleted++;
+        console.log(`[Plant Deletion API] 删除标注文件: ${file}`);
+      } catch (error) {
+        const errorMsg = `删除标注文件失败: ${file} - ${error.message}`;
+        deletionStats.errors.push(errorMsg);
+        console.error(`[Plant Deletion API] ${errorMsg}`);
+      }
+    }
+    
+    // Delete related files (status, skip info)
+    for (const file of relatedFiles) {
+      try {
+        const filePath = path.join(annotationsDir, file);
+        await fs.unlink(filePath);
+        deletionStats.relatedFilesDeleted++;
+        console.log(`[Plant Deletion API] 删除相关文件: ${file}`);
+      } catch (error) {
+        const errorMsg = `删除相关文件失败: ${file} - ${error.message}`;
+        deletionStats.errors.push(errorMsg);
+        console.error(`[Plant Deletion API] ${errorMsg}`);
+      }
+    }
+    
+    // Step 4: Prepare response
+    const totalFilesFound = plantAnnotationFiles.length + relatedFiles.length;
+    const totalFilesDeleted = deletionStats.annotationFilesDeleted + deletionStats.relatedFilesDeleted;
+    
+    const responseData = {
+      success: true,
+      message: `植物 ${plantId} 的标注数据删除完成`,
+      plantId,
+      statistics: {
+        annotationFilesFound: plantAnnotationFiles.length,
+        relatedFilesFound: relatedFiles.length,
+        annotationFilesDeleted: deletionStats.annotationFilesDeleted,
+        relatedFilesDeleted: deletionStats.relatedFilesDeleted,
+        totalFilesProcessed: totalFilesFound,
+        totalFilesDeleted: totalFilesDeleted,
+        backupCreated: true,
+        backupPath: backupDir,
+        backupStats,
+        errors: deletionStats.errors,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    if (deletionStats.errors.length > 0) {
+      responseData.warning = `部分文件删除失败: ${deletionStats.errors.length} 个错误`;
+      console.warn(`[Plant Deletion API] 完成，但有 ${deletionStats.errors.length} 个错误`);
+    }
+    
+    console.log(`[Plant Deletion API] 植物 ${plantId} 删除完成: ${totalFilesDeleted}/${totalFilesFound} 文件已删除`);
+    res.json(responseData);
+    
+  } catch (error) {
+    console.error(`[Plant Deletion API] 删除植物 ${req.params.plantId} 标注数据失败:`, error);
+    res.status(500).json({
+      success: false,
+      error: '删除植物标注数据失败',
+      details: error.message,
+      plantId: req.params.plantId
+    });
+  }
+});
+
+// 🔧 NEW: Get plant annotation statistics (for confirmation dialogs)
+app.get('/api/annotations/plant/:plantId/stats', async (req, res) => {
+  try {
+    const { plantId } = req.params;
+    const annotationsDir = await ensureAnnotationsDirectory();
+    
+    // Find all files belonging to this plant
+    const files = await fs.readdir(annotationsDir);
+    const plantAnnotationFiles = [];
+    const relatedFiles = [];
+    
+    for (const file of files) {
+      if (file.startsWith(plantId)) {
+        if (file.endsWith('.json') && !file.includes('_backup_') && !file.includes('_deleted_')) {
+          if (file.includes('_status.json') || file.includes('_skip_info.json')) {
+            relatedFiles.push(file);
+          } else {
+            plantAnnotationFiles.push(file);
+          }
+        }
+      }
+    }
+    
+    // Count total annotation points
+    let totalAnnotationPoints = 0;
+    for (const file of plantAnnotationFiles) {
+      try {
+        const filePath = path.join(annotationsDir, file);
+        const content = await fs.readFile(filePath, 'utf-8');
+        const data = JSON.parse(content);
+        if (data.annotations && Array.isArray(data.annotations)) {
+          totalAnnotationPoints += data.annotations.length;
+        }
+      } catch (error) {
+        console.warn(`[Plant Stats API] 读取文件失败: ${file}`, error.message);
+      }
+    }
+    
+    res.json({
+      success: true,
+      plantId,
+      statistics: {
+        annotationFiles: plantAnnotationFiles.length,
+        relatedFiles: relatedFiles.length,
+        totalFiles: plantAnnotationFiles.length + relatedFiles.length,
+        totalAnnotationPoints,
+        files: {
+          annotations: plantAnnotationFiles,
+          related: relatedFiles
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error(`[Plant Stats API] 获取植物 ${req.params.plantId} 统计失败:`, error);
+    res.status(500).json({
+      success: false,
+      error: '获取植物统计失败',
+      details: error.message
+    });
+  }
+});
+
 // 健康检查
 app.get('/api/health', (req, res) => {
   res.json({
@@ -1628,6 +1828,7 @@ app.get('/api/health', (req, res) => {
       'plant-images', 
       'individual-annotations',
       'bulk-annotations',
+      'plant-deletion',  // 🔧 NEW: Plant-level annotation deletion
       'note-system',
       'plant-status'
     ]

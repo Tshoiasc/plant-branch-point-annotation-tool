@@ -456,6 +456,44 @@ function bindEventListeners() {
     exportDataBtn.addEventListener('click', handleExportData);
   }
   
+  // 🔧 NEW: Delete Plant Annotations button
+  const deletePlantAnnotationsBtn = document.getElementById('delete-plant-annotations-btn');
+  if (deletePlantAnnotationsBtn) {
+    deletePlantAnnotationsBtn.addEventListener('click', handleDeletePlantAnnotations);
+  }
+  
+  // 🔧 NEW: Delete Plant Annotations modal events
+  const deleteModalClose = document.getElementById('delete-modal-close');
+  const deleteCancelBtn = document.getElementById('delete-cancel-btn');
+  const deleteConfirmBtn = document.getElementById('delete-confirm-btn');
+  const deleteConfirmationCheckbox = document.getElementById('delete-confirmation-checkbox');
+  
+  if (deleteModalClose) {
+    deleteModalClose.addEventListener('click', hideDeletePlantAnnotationsModal);
+  }
+  
+  if (deleteCancelBtn) {
+    deleteCancelBtn.addEventListener('click', hideDeletePlantAnnotationsModal);
+  }
+  
+  if (deleteConfirmBtn) {
+    deleteConfirmBtn.addEventListener('click', confirmDeletePlantAnnotations);
+  }
+  
+  if (deleteConfirmationCheckbox) {
+    deleteConfirmationCheckbox.addEventListener('change', handleDeleteConfirmationChange);
+  }
+  
+  // 🔧 NEW: Delete modal background click close
+  const deleteModal = document.getElementById('delete-plant-annotations-modal');
+  if (deleteModal) {
+    deleteModal.addEventListener('click', (e) => {
+      if (e.target === deleteModal) {
+        hideDeletePlantAnnotationsModal();
+      }
+    });
+  }
+  
   // 键盘快捷键
   document.addEventListener('keydown', handleKeyboardShortcuts);
   
@@ -983,6 +1021,9 @@ function initializeEmptyWorkspace() {
   
   // 更新进度信息
   updateProgressInfo('Please connect to dataset and select a plant');
+  
+  // 🔧 NEW: Update delete button state when workspace is empty
+  updateDeletePlantAnnotationsButtonState();
 }
 
 /**
@@ -1096,6 +1137,9 @@ async function handlePlantSelect(plant) {
     await showViewAngleSelection(plant, imagesByView);
     
     updateProgressInfo(`Loaded ${plant.id} - Total ${plant.imageCount} images`);
+    
+    // 🔧 NEW: Update delete button state when plant is selected
+    updateDeletePlantAnnotationsButtonState();
     
   } catch (error) {
     console.error('选择植物失败:', error);
@@ -4101,3 +4145,213 @@ function addRetryButton() {
   const buttonArea = errorModal.querySelector('.error-buttons') || errorModal;
   buttonArea.appendChild(retryButton);
 }
+
+// 🔧 NEW: Delete Plant Annotations Functionality
+
+/**
+ * Handle delete plant annotations button click
+ */
+async function handleDeletePlantAnnotations() {
+  if (!appState.currentPlant) {
+    showError('删除失败', '请先选择植物');
+    return;
+  }
+  
+  console.log(`[Delete Plant] 开始删除植物 ${appState.currentPlant.id} 的标注`);
+  
+  // Show the confirmation modal and load statistics
+  await showDeletePlantAnnotationsModal(appState.currentPlant.id);
+}
+
+/**
+ * Show delete plant annotations modal with statistics
+ */
+async function showDeletePlantAnnotationsModal(plantId) {
+  const modal = document.getElementById('delete-plant-annotations-modal');
+  const plantIdElement = document.getElementById('delete-plant-id');
+  const statsLoading = document.getElementById('stats-loading');
+  const statsContent = document.getElementById('stats-content');
+  const confirmCheckbox = document.getElementById('delete-confirmation-checkbox');
+  const confirmButton = document.getElementById('delete-confirm-btn');
+  
+  if (!modal) return;
+  
+  // Reset modal state
+  plantIdElement.textContent = plantId;
+  statsLoading.style.display = 'block';
+  statsContent.style.display = 'none';
+  confirmCheckbox.checked = false;
+  confirmButton.disabled = true;
+  
+  // Show modal
+  modal.style.display = 'flex';
+  
+  try {
+    // Load plant annotation statistics
+    console.log(`[Delete Plant] 加载植物 ${plantId} 的统计信息`);
+    const response = await fetch(`http://localhost:3003/api/annotations/plant/${plantId}/stats`);
+    const result = await response.json();
+    
+    if (result.success) {
+      // Update statistics display
+      document.getElementById('annotation-files-count').textContent = result.statistics.annotationFiles;
+      document.getElementById('annotation-points-count').textContent = result.statistics.totalAnnotationPoints;
+      document.getElementById('related-files-count').textContent = result.statistics.relatedFiles;
+      document.getElementById('total-files-count').textContent = result.statistics.totalFiles;
+      
+      // Show statistics
+      statsLoading.style.display = 'none';
+      statsContent.style.display = 'block';
+      
+      console.log(`[Delete Plant] 统计加载完成: ${result.statistics.totalFiles} 个文件, ${result.statistics.totalAnnotationPoints} 个标注点`);
+      
+      // Store statistics for later use
+      modal.dataset.plantStats = JSON.stringify(result.statistics);
+    } else {
+      throw new Error(result.error || '获取统计信息失败');
+    }
+  } catch (error) {
+    console.error(`[Delete Plant] 加载统计信息失败:`, error);
+    statsLoading.innerHTML = `<span style="color: #dc2626;">❌ 加载统计信息失败: ${error.message}</span>`;
+  }
+}
+
+/**
+ * Hide delete plant annotations modal
+ */
+function hideDeletePlantAnnotationsModal() {
+  const modal = document.getElementById('delete-plant-annotations-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    
+    // Reset modal state
+    const confirmCheckbox = document.getElementById('delete-confirmation-checkbox');
+    const confirmButton = document.getElementById('delete-confirm-btn');
+    if (confirmCheckbox) confirmCheckbox.checked = false;
+    if (confirmButton) confirmButton.disabled = true;
+  }
+}
+
+/**
+ * Handle confirmation checkbox change
+ */
+function handleDeleteConfirmationChange() {
+  const confirmCheckbox = document.getElementById('delete-confirmation-checkbox');
+  const confirmButton = document.getElementById('delete-confirm-btn');
+  
+  if (confirmCheckbox && confirmButton) {
+    confirmButton.disabled = !confirmCheckbox.checked;
+  }
+}
+
+/**
+ * Confirm and execute plant annotations deletion
+ */
+async function confirmDeletePlantAnnotations() {
+  if (!appState.currentPlant) {
+    showError('删除失败', '未选择植物');
+    return;
+  }
+  
+  const plantId = appState.currentPlant.id;
+  const modal = document.getElementById('delete-plant-annotations-modal');
+  const confirmButton = document.getElementById('delete-confirm-btn');
+  
+  if (!modal || !confirmButton) return;
+  
+  try {
+    // Show loading state
+    const originalText = confirmButton.textContent;
+    confirmButton.textContent = '⏳ 删除中...';
+    confirmButton.disabled = true;
+    
+    console.log(`[Delete Plant] 开始删除植物 ${plantId} 的所有标注`);
+    
+    // Execute deletion via API
+    const response = await fetch(`http://localhost:3003/api/annotations/plant/${plantId}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log(`[Delete Plant] 删除成功:`, result.statistics);
+      
+      // Hide modal
+      hideDeletePlantAnnotationsModal();
+      
+      // Show success message with statistics
+      const stats = result.statistics;
+      const successMessage = `植物 ${plantId} 的标注数据删除完成\n\n` +
+        `删除文件: ${stats.totalFilesDeleted}/${stats.totalFilesProcessed}\n` +
+        `标注文件: ${stats.annotationFilesDeleted}\n` +
+        `相关文件: ${stats.relatedFilesDeleted}\n` +
+        `备份已创建: ${stats.backupPath}`;
+        
+      showSuccess('删除成功', successMessage);
+      
+      // Update progress and UI
+      updateProgressInfo(`植物 ${plantId} 的标注数据已删除`);
+      
+      // Clear current workspace if this was the current plant
+      if (appState.currentPlant && appState.currentPlant.id === plantId) {
+        initializeEmptyWorkspace();
+        
+        // Update plant status in the list
+        const plant = appState.plants.find(p => p.id === plantId);
+        if (plant) {
+          plant.status = 'pending'; // Reset to pending after deletion
+          
+          // Re-render the plant list item
+          const plantItem = document.querySelector(`[data-plant-id="${plantId}"]`);
+          if (plantItem) {
+            const newItem = createPlantListItem(plant);
+            plantItem.parentNode.replaceChild(newItem, plantItem);
+          }
+        }
+      }
+      
+      // Update statistics
+      updateProgressStats();
+      
+      // Refresh note badges (since annotations are deleted, notes might be affected)
+      if (window.PlantAnnotationTool?.noteUI) {
+        await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
+      }
+      
+    } else {
+      throw new Error(result.error || '删除操作失败');
+    }
+    
+  } catch (error) {
+    console.error(`[Delete Plant] 删除植物 ${plantId} 失败:`, error);
+    
+    // Restore button state
+    confirmButton.textContent = originalText;
+    confirmButton.disabled = false;
+    
+    showError('删除失败', `删除植物 ${plantId} 的标注数据时出错: ${error.message}`);
+  }
+}
+
+/**
+ * Update delete button state based on current plant selection
+ */
+function updateDeletePlantAnnotationsButtonState() {
+  const deleteButton = document.getElementById('delete-plant-annotations-btn');
+  if (!deleteButton) return;
+  
+  if (appState.currentPlant) {
+    deleteButton.disabled = false;
+    deleteButton.title = `删除植物 ${appState.currentPlant.id} 的所有标注数据`;
+  } else {
+    deleteButton.disabled = true;
+    deleteButton.title = '请先选择植物';
+  }
+}
+
+// 将删除按钮状态更新函数暴露到全局，供其他模块调用
+window.updateDeletePlantAnnotationsButtonState = updateDeletePlantAnnotationsButtonState;

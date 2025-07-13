@@ -279,6 +279,9 @@
                 <button id="export-data-btn" class="btn btn-secondary">
                   Export Annotation Data
                 </button>
+                <button id="delete-plant-annotations-btn" class="btn btn-danger" style="margin-top: 10px;" disabled>
+                  🗑️ Delete Plant Annotations
+                </button>
               </div>
             </div>
           </div>
@@ -360,6 +363,78 @@
         <div class="modal-footer">
           <button id="skip-confirm-btn" class="btn btn-warning">Confirm Skip</button>
           <button id="skip-cancel-btn" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 🔧 NEW: Delete Plant Annotations Confirmation Modal -->
+    <div id="delete-plant-annotations-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h3>⚠️ Delete Plant Annotations</h3>
+          <button class="modal-close" id="delete-modal-close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="warning-notice" style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+              <span style="color: #dc2626; font-size: 20px;">⚠️</span>
+              <strong style="color: #dc2626;">WARNING: This action cannot be undone!</strong>
+            </div>
+            <p style="margin: 0; color: #991b1b;">This will permanently delete ALL annotation data for the selected plant, including all time-series annotations and related files.</p>
+          </div>
+          
+          <div class="plant-info" style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+            <h4 style="margin: 0 0 10px 0;">Plant Information:</h4>
+            <div class="info-row">
+              <span class="info-label">Plant ID:</span>
+              <span id="delete-plant-id" class="info-value" style="font-weight: 600;"></span>
+            </div>
+          </div>
+          
+          <div id="deletion-statistics" class="deletion-stats" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+            <h4 style="margin: 0 0 10px 0;">Files to be deleted:</h4>
+            <div id="stats-loading" style="text-align: center; color: #6b7280;">
+              <div class="loading-spinner" style="display: inline-block; margin-right: 8px;"></div>
+              Loading statistics...
+            </div>
+            <div id="stats-content" style="display: none;">
+              <div class="stat-item">
+                <span class="stat-label">Annotation files:</span>
+                <span id="annotation-files-count" class="stat-value">0</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Annotation points:</span>
+                <span id="annotation-points-count" class="stat-value">0</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Related files:</span>
+                <span id="related-files-count" class="stat-value">0</span>
+              </div>
+              <div class="stat-item" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e7eb;">
+                <span class="stat-label" style="font-weight: 600;">Total files:</span>
+                <span id="total-files-count" class="stat-value" style="font-weight: 600; color: #dc2626;">0</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="confirmation-section" style="margin-bottom: 20px;">
+            <label class="checkbox-label" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <input type="checkbox" id="delete-confirmation-checkbox" style="transform: scale(1.2);">
+              <span>I understand that this action is irreversible and will delete all annotation data for this plant</span>
+            </label>
+          </div>
+          
+          <div class="backup-notice" style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+              <span style="color: #059669;">💾</span>
+              <strong style="color: #065f46;">Automatic Backup</strong>
+            </div>
+            <p style="margin: 0; color: #065f46; font-size: 14px;">A complete backup will be created before deletion and stored in the annotations directory for recovery purposes.</p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="delete-confirm-btn" class="btn btn-danger" disabled>🗑️ Delete All Annotations</button>
+          <button id="delete-cancel-btn" class="btn btn-secondary">Cancel</button>
         </div>
       </div>
     </div>
