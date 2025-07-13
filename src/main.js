@@ -1007,6 +1007,12 @@ function initializeEmptyWorkspace() {
   // 清空工作区
   clearWorkspaceState();
   
+  // 🔧 FIX: Ensure branch point preview is reset in empty workspace state  
+  if (branchPointPreviewManager) {
+    branchPointPreviewManager.reset();
+    console.log('[EmptyWorkspace] Branch point preview reset - entering empty state');
+  }
+  
   // 隐藏视角选择区域
   const viewAngleSection = document.getElementById('view-angle-section');
   if (viewAngleSection) {
@@ -1035,6 +1041,12 @@ function clearWorkspaceState() {
   // 清空标注工具 - 使用新的clearImage方法完全清空图像
   if (annotationTool) {
     annotationTool.clearImage(); // 🔧 FIX: 使用clearImage替代resetView，防止显示残留图像
+  }
+  
+  // 🔧 FIX: Reset branch point preview when clearing workspace (no previous image context)
+  if (branchPointPreviewManager) {
+    branchPointPreviewManager.reset();
+    console.log('[Workspace] Branch point preview reset - no previous image context');
   }
   
   // 🔧 FIX: 在清空工作区后再设置 currentImage 为 null（防止自动保存引用错误）
@@ -4262,7 +4274,7 @@ async function confirmDeletePlantAnnotations() {
   try {
     // Show loading state
     const originalText = confirmButton.textContent;
-    confirmButton.textContent = '⏳ 删除中...';
+    confirmButton.textContent = '⏳ Deleting...';
     confirmButton.disabled = true;
     
     console.log(`[Delete Plant] 开始删除植物 ${plantId} 的所有标注`);
