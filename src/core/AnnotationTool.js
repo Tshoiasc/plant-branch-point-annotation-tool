@@ -690,6 +690,18 @@ export class AnnotationTool {
       imageBottom: imageTop + imageHeight
     };
     
+    // 🔧 DEBUG: Log bounds occasionally for troubleshooting
+    if (Math.random() < 0.001) { // 0.1% chance to log
+      console.log('[AnnotationTool] Image bounds debug:', {
+        imageSize: { width: this.imageElement.width, height: this.imageElement.height },
+        canvasSize: { width: this.canvas.width, height: this.canvas.height },
+        scale: this.state.scale,
+        translate: { x: this.state.translateX, y: this.state.translateY },
+        visibleBounds,
+        imageLoaded: this.imageLoaded
+      });
+    }
+    
     return visibleBounds;
   }
 
@@ -747,6 +759,56 @@ export class AnnotationTool {
     }
 
     return true;
+  }
+
+  /**
+   * 🔧 NEW: Silent bounds checking for cursor state (no console warnings)
+   */
+  canAnnotateAtSilent(screenX, screenY) {
+    // Check if image is loaded
+    if (!this.imageElement || !this.imageLoaded) {
+      return false;
+    }
+
+    // Check if point is within visible image area
+    if (!this.isPointInVisibleImage(screenX, screenY)) {
+      return false;
+    }
+
+    // Double-check with image coordinates
+    const imagePos = this.screenToImage(screenX, screenY);
+    if (!this.isImageCoordinateValid(imagePos.x, imagePos.y)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * 🔧 DEBUG: Manual bounds checking for troubleshooting
+   */
+  debugBoundsAt(screenX, screenY) {
+    console.log('[AnnotationTool] Debug bounds check at:', { screenX, screenY });
+    
+    if (!this.imageElement || !this.imageLoaded) {
+      console.log('❌ Image not loaded');
+      return false;
+    }
+    
+    const bounds = this.getVisibleImageBounds();
+    console.log('📐 Visible bounds:', bounds);
+    
+    const inVisibleArea = this.isPointInVisibleImage(screenX, screenY);
+    console.log('🎯 In visible area:', inVisibleArea);
+    
+    const imagePos = this.screenToImage(screenX, screenY);
+    const validCoords = this.isImageCoordinateValid(imagePos.x, imagePos.y);
+    console.log('📍 Image coords:', imagePos, 'Valid:', validCoords);
+    
+    const finalResult = this.canAnnotateAtSilent(screenX, screenY);
+    console.log('✅ Final result:', finalResult);
+    
+    return finalResult;
   }
 
   /**
@@ -903,16 +965,25 @@ export class AnnotationTool {
       // 检查悬停的标注点
       const hoveredKeypoint = this.getKeypointAt(mousePos);
       
+      // 🔧 FIX: Always check cursor state for better responsiveness
+      let newCursor = 'crosshair'; // Default cursor
+      
+      if (hoveredKeypoint) {
+        newCursor = 'pointer';
+      } else {
+        // Check if mouse is within valid annotation area
+        const canAnnotate = this.canAnnotateAtSilent(mousePos.x, mousePos.y);
+        newCursor = canAnnotate ? 'crosshair' : 'not-allowed';
+      }
+      
+      // Update cursor if it changed
+      if (this.canvas.style.cursor !== newCursor) {
+        this.canvas.style.cursor = newCursor;
+      }
+      
+      // Update hovered keypoint and render if it changed
       if (hoveredKeypoint !== this.hoveredKeypoint) {
         this.hoveredKeypoint = hoveredKeypoint;
-        // 🔧 FIX: Provide visual feedback for annotation boundaries
-        if (hoveredKeypoint) {
-          this.canvas.style.cursor = 'pointer';
-        } else {
-          // Check if mouse is within valid annotation area
-          const canAnnotate = this.canCreateAnnotationAt(mousePos.x, mousePos.y);
-          this.canvas.style.cursor = canAnnotate ? 'crosshair' : 'not-allowed';
-        }
         this.render();
       }
     }

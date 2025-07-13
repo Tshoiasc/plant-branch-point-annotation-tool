@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Annotation Bounds Test</title>
+    <title>Annotation Bounds Fix - Cursor Logic Test</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -15,11 +15,11 @@
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            max-width: 800px;
+            max-width: 900px;
         }
-        .test-info {
-            background: #e8f4fd;
-            border: 1px solid #bee5f7;
+        .status-box {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
             border-radius: 6px;
             padding: 15px;
             margin-bottom: 20px;
@@ -29,17 +29,18 @@
             border: 1px solid #dee2e6;
             border-radius: 6px;
             padding: 15px;
-        }
-        .test-steps ol {
-            margin: 0;
-            padding-left: 20px;
-        }
-        .test-steps li {
-            margin-bottom: 8px;
+            margin-bottom: 20px;
         }
         .fix-summary {
             background: #d4edda;
             border: 1px solid #c3e6cb;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .debug-section {
+            background: #e8f4fd;
+            border: 1px solid #bee5f7;
             border-radius: 6px;
             padding: 15px;
             margin-top: 20px;
@@ -55,87 +56,124 @@
         .cursor-valid { background: #d4edda; color: #155724; }
         .cursor-invalid { background: #f8d7da; color: #721c24; }
         .cursor-hover { background: #fff3cd; color: #856404; }
+        .code-snippet {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin: 10px 0;
+        }
+        .issue-resolved {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
     <div class="test-container">
-        <h1>🔧 Annotation Bounds Fix - Test Guide</h1>
+        <h1>🔧 Cursor Logic Fix - Test Guide</h1>
         
-        <div class="test-info">
-            <h3>Issue Fixed:</h3>
-            <p><strong>Problem:</strong> Users could place annotations outside the image area in blank canvas space</p>
-            <p><strong>Solution:</strong> Added comprehensive bounds checking to prevent annotations outside visible image boundaries</p>
+        <div class="status-box">
+            <h3>🚨 Issue Identified & Fixed:</h3>
+            <p><strong>Problem:</strong> Cursor stuck as "not-allowed" everywhere, only changing to "pointer" after clicking</p>
+            <p><strong>Root Cause:</strong> Cursor update logic only triggered when hovered keypoint changed, not when moving between valid/invalid areas</p>
+            <p><strong>Solution:</strong> Separated cursor logic from keypoint detection, added silent bounds checking</p>
+        </div>
+
+        <div class="issue-resolved">
+            <strong>✅ FIXED:</strong> Cursor now properly updates as mouse moves between valid and invalid areas
         </div>
 
         <div class="test-steps">
-            <h3>Testing Steps:</h3>
+            <h3>🧪 Testing Steps:</h3>
             <ol>
-                <li><strong>Load the main application</strong> and select a plant with images</li>
+                <li><strong>Load the application</strong> and select a plant with images</li>
                 <li><strong>Open an image</strong> in the annotation workspace</li>
                 <li><strong>Zoom out</strong> so there's gray/empty space around the image</li>
-                <li><strong>Try clicking in empty areas</strong> around the image:
+                <li><strong>Move mouse around</strong>:
                     <ul>
-                        <li>✅ Should show <span class="cursor-demo cursor-invalid">not-allowed cursor</span></li>
-                        <li>✅ Should NOT create annotation points</li>
-                        <li>✅ Should show error message if attempted</li>
+                        <li>✅ Over image: <span class="cursor-demo cursor-valid">crosshair cursor</span></li>
+                        <li>✅ Outside image: <span class="cursor-demo cursor-invalid">not-allowed cursor</span></li>
+                        <li>✅ Over annotations: <span class="cursor-demo cursor-hover">pointer cursor</span></li>
+                        <li>✅ Smooth transitions between cursor states</li>
                     </ul>
                 </li>
-                <li><strong>Click directly on the image</strong>:
+                <li><strong>Test annotation creation</strong>:
                     <ul>
-                        <li>✅ Should show <span class="cursor-demo cursor-valid">crosshair cursor</span></li>
-                        <li>✅ Should create annotation points normally</li>
-                    </ul>
-                </li>
-                <li><strong>Hover over existing annotations</strong>:
-                    <ul>
-                        <li>✅ Should show <span class="cursor-demo cursor-hover">pointer cursor</span></li>
-                    </ul>
-                </li>
-                <li><strong>Try dragging annotations</strong> outside image boundaries:
-                    <ul>
-                        <li>✅ Should constrain movement to stay within image</li>
-                        <li>✅ Should ignore drag movements outside valid area</li>
+                        <li>✅ Click on image: Creates annotation normally</li>
+                        <li>✅ Click outside image: Shows error message, no annotation</li>
                     </ul>
                 </li>
             </ol>
         </div>
 
+        <div class="debug-section">
+            <h3>🔍 Debug Tools (Console Commands):</h3>
+            <p>Open browser console and use these commands for debugging:</p>
+            
+            <div class="code-snippet">
+// Get the annotation tool instance
+const tool = window.annotationTool;
+
+// Debug bounds at current mouse position (replace x, y with coordinates)
+tool.debugBoundsAt(400, 300);
+
+// Check if image is loaded
+console.log('Image loaded:', tool.imageLoaded);
+console.log('Image element:', tool.imageElement);
+
+// Check current state
+console.log('Scale:', tool.state.scale);
+console.log('Translate:', tool.state.translateX, tool.state.translateY);
+            </div>
+        </div>
+
         <div class="fix-summary">
-            <h3>🎯 Fix Implementation Summary:</h3>
+            <h3>🎯 Technical Fix Details:</h3>
             <ul>
-                <li><strong>Added bounds validation methods:</strong>
+                <li><strong>Cursor Logic Improvement:</strong>
                     <ul>
-                        <li><code>getVisibleImageBounds()</code> - Calculates visible image area</li>
-                        <li><code>isPointInVisibleImage()</code> - Checks screen coordinates</li>
-                        <li><code>isImageCoordinateValid()</code> - Validates image coordinates</li>
-                        <li><code>canCreateAnnotationAt()</code> - Comprehensive validation</li>
+                        <li>Always check cursor state on mouse move (not just on keypoint change)</li>
+                        <li>Separated cursor checking from keypoint detection</li>
+                        <li>Added performance-optimized cursor updates</li>
                     </ul>
                 </li>
-                <li><strong>Updated annotation creation methods:</strong>
+                <li><strong>Performance Optimization:</strong>
                     <ul>
-                        <li><code>createNoDirectionKeypoint()</code> - Click annotations</li>
-                        <li><code>addKeypoint()</code> - Programmatic annotations</li>
-                        <li><code>startDirectionAnnotation()</code> - Direction annotations</li>
+                        <li>Created <code>canAnnotateAtSilent()</code> for cursor checking</li>
+                        <li>Eliminated console.warn spam during mouse movement</li>
+                        <li>Added debug bounds method for troubleshooting</li>
                     </ul>
                 </li>
-                <li><strong>Enhanced user feedback:</strong>
+                <li><strong>Enhanced Debugging:</strong>
                     <ul>
-                        <li>Visual cursor feedback (crosshair vs not-allowed)</li>
-                        <li>Error messages for invalid positions</li>
-                        <li>Constrained dragging within image bounds</li>
+                        <li><code>debugBoundsAt(x, y)</code> - Manual bounds testing</li>
+                        <li>Occasional automatic bounds logging</li>
+                        <li>Clear separation of concerns in bounds checking</li>
                     </ul>
                 </li>
             </ul>
         </div>
 
         <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
-            <p><strong>Note:</strong> This fix ensures data quality by preventing meaningless annotations outside the actual image content while maintaining a smooth user experience with clear visual feedback.</p>
+            <p><strong>Expected Behavior:</strong> Cursor should smoothly transition between crosshair (valid areas), not-allowed (invalid areas), and pointer (over annotations) as the mouse moves around the canvas.</p>
+        </div>
+
+        <div style="margin-top: 20px; padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 6px;">
+            <p><strong>If cursor still misbehaves:</strong> Open console and run <code>window.annotationTool.debugBoundsAt(mouseX, mouseY)</code> with your mouse coordinates to identify the issue.</p>
         </div>
     </div>
 
     <script>
-        console.log('🔧 Annotation Bounds Fix Test Page Loaded');
-        console.log('📋 Use the steps above to verify the fix works correctly');
+        console.log('🔧 Cursor Logic Fix Test Page Loaded');
+        console.log('📋 Use the steps above to verify cursor behavior works correctly');
+        console.log('🔍 Debug tool available: window.annotationTool.debugBoundsAt(x, y)');
         
         // Add some interactivity for demonstration
         document.addEventListener('DOMContentLoaded', function() {
@@ -153,6 +191,12 @@
                 cursor.addEventListener('mouseleave', function() {
                     this.style.cursor = 'default';
                 });
+            });
+
+            // Add mouse position tracking for testing
+            document.addEventListener('mousemove', function(e) {
+                // Store mouse position for debug purposes
+                window.lastMousePos = { x: e.clientX, y: e.clientY };
             });
         });
     </script>
