@@ -4240,7 +4240,11 @@ function hideDeletePlantAnnotationsModal() {
     const confirmCheckbox = document.getElementById('delete-confirmation-checkbox');
     const confirmButton = document.getElementById('delete-confirm-btn');
     if (confirmCheckbox) confirmCheckbox.checked = false;
-    if (confirmButton) confirmButton.disabled = true;
+    if (confirmButton) {
+      confirmButton.disabled = true;
+      // 🔧 FIX: Also restore button text to default when hiding modal
+      confirmButton.textContent = '🗑️ Delete All Annotations';
+    }
   }
 }
 
@@ -4291,6 +4295,9 @@ async function confirmDeletePlantAnnotations() {
     
     if (result.success) {
       console.log(`[Delete Plant] 删除成功:`, result.statistics);
+      
+      // 🔧 FIX: Restore button text before hiding modal
+      confirmButton.textContent = originalText;
       
       // Hide modal
       hideDeletePlantAnnotationsModal();

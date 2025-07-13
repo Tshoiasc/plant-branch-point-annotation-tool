@@ -97,6 +97,17 @@ export class NoteUI {
               <label for="note-author">Author</label>
               <input type="text" id="note-author" value="User" placeholder="Enter author name">
             </div>
+            
+            <!-- 🔧 NEW: Backward Propagation Option -->
+            <div class="form-group" id="backward-propagation-group" style="display: none;">
+              <div class="checkbox-wrapper">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="note-backward-propagation">
+                  <span class="checkbox-text">Backward Propagation</span>
+                </label>
+                <div class="form-help">Apply this note to all later-dated images of the current plant</div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -778,6 +789,38 @@ export class NoteUI {
       .note-item:last-child {
         border-bottom: none;
       }
+      
+      /* Backward propagation checkbox styling */
+      .checkbox-wrapper {
+        margin: 15px 0;
+      }
+      
+      .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-weight: 500;
+        color: #374151;
+      }
+      
+      .checkbox-label input[type="checkbox"] {
+        margin: 0;
+        padding: 0;
+        transform: scale(1.1);
+        accent-color: #3b82f6;
+      }
+      
+      .checkbox-text {
+        user-select: none;
+      }
+      
+      #backward-propagation-group .form-help {
+        margin-top: 5px;
+        font-size: 12px;
+        color: #6b7280;
+        font-style: italic;
+      }
     `;
     
     document.head.appendChild(style);
@@ -794,6 +837,7 @@ export class NoteUI {
 
     const modal = document.getElementById('note-modal');
     const title = document.getElementById('note-modal-title');
+    const backwardPropagationGroup = document.getElementById('backward-propagation-group');
     
     if (!modal || !title) {
       console.error('[NoteUI] Note modal elements not found');
@@ -801,6 +845,17 @@ export class NoteUI {
     }
     
     title.textContent = this.isEditMode ? 'Edit Note' : 'Add Note';
+    
+    // 🔧 NEW: Show backward propagation option only for new image notes
+    const isNewImageNote = !this.isEditMode && this.currentImageId;
+    if (backwardPropagationGroup) {
+      backwardPropagationGroup.style.display = isNewImageNote ? 'block' : 'none';
+      // Reset checkbox when showing modal
+      const checkbox = document.getElementById('note-backward-propagation');
+      if (checkbox) {
+        checkbox.checked = false;
+      }
+    }
     
     if (note) {
       document.getElementById('note-title').value = note.title;
@@ -845,6 +900,75 @@ export class NoteUI {
   }
 
   /**
+   * Get later-dated images for backward propagation
+   */
+  async getLaterDatedImages(plantId, currentImageId) {
+    try {
+      console.log(`[NoteUI] Finding later-dated images for ${plantId}, current: ${currentImageId}`);
+      
+      // Get all images for the current plant and view angle
+      const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+      if (!plantDataManager) {
+        throw new Error('PlantDataManager not available');
+      }
+      
+      // Get current plant information
+      const currentPlant = plantDataManager.plants?.get(plantId);
+      if (!currentPlant || !currentPlant.selectedViewAngle) {
+        throw new Error('Current plant or view angle not found');
+      }
+      
+      // Get all images for the current view angle
+      const images = await plantDataManager.getPlantImages(plantId, currentPlant.selectedViewAngle);
+      if (!images || images.length === 0) {
+        return [];
+      }
+      
+      // Find the current image index
+      const currentImageIndex = images.findIndex(img => img.id === currentImageId);
+      if (currentImageIndex === -1) {
+        throw new Error('Current image not found in plant images');
+      }
+      
+      // Get all images after the current one (later in time)
+      const laterImages = images.slice(currentImageIndex + 1);
+      
+      console.log(`[NoteUI] Found ${laterImages.length} later-dated images for backward propagation`);
+      return laterImages;
+      
+    } catch (error) {
+      console.error('[NoteUI] Error finding later-dated images:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Apply note to multiple images (backward propagation)
+   */
+  async applyNoteToMultipleImages(plantId, noteData, targetImages) {
+    const results = {
+      success: [],
+      failed: []
+    };
+    
+    console.log(`[NoteUI] Applying note to ${targetImages.length} images via backward propagation`);
+    
+    for (const image of targetImages) {
+      try {
+        await this.noteManager.addImageNote(plantId, image.id, noteData);
+        results.success.push(image.id);
+        console.log(`[NoteUI] Note successfully applied to ${image.id}`);
+      } catch (error) {
+        console.error(`[NoteUI] Failed to apply note to ${image.id}:`, error);
+        results.failed.push({ imageId: image.id, error: error.message });
+      }
+    }
+    
+    console.log(`[NoteUI] Backward propagation completed: ${results.success.length} success, ${results.failed.length} failed`);
+    return results;
+  }
+
+  /**
    * Save note
    */
   async saveNote() {
@@ -853,6 +977,10 @@ export class NoteUI {
     const noteType = document.getElementById('note-type').value;
     const tags = document.getElementById('note-tags').value.split(',').map(tag => tag.trim()).filter(tag => tag);
     const author = document.getElementById('note-author').value.trim();
+    
+    // 🔧 NEW: Check backward propagation setting
+    const backwardPropagationCheckbox = document.getElementById('note-backward-propagation');
+    const enableBackwardPropagation = backwardPropagationCheckbox && backwardPropagationCheckbox.checked;
 
     const noteData = {
       title,
@@ -877,7 +1005,31 @@ export class NoteUI {
         console.log('[NoteUI] Creating new note...');
         if (this.currentImageId) {
           console.log(`[NoteUI] Creating image note for ${this.currentPlantId}/${this.currentImageId}`);
+          
+          // Add note to current image
           await this.noteManager.addImageNote(this.currentPlantId, this.currentImageId, noteData);
+          
+          // 🔧 NEW: Handle backward propagation
+          if (enableBackwardPropagation) {
+            console.log('[NoteUI] Backward propagation enabled, finding later-dated images...');
+            
+            const laterImages = await this.getLaterDatedImages(this.currentPlantId, this.currentImageId);
+            if (laterImages.length > 0) {
+              console.log(`[NoteUI] Applying note to ${laterImages.length} later-dated images`);
+              const propagationResults = await this.applyNoteToMultipleImages(this.currentPlantId, noteData, laterImages);
+              
+              // Show propagation results
+              if (propagationResults.success.length > 0) {
+                console.log(`[NoteUI] Backward propagation successful: ${propagationResults.success.length} images updated`);
+              }
+              if (propagationResults.failed.length > 0) {
+                console.warn(`[NoteUI] Backward propagation partial failure: ${propagationResults.failed.length} images failed`);
+              }
+            } else {
+              console.log('[NoteUI] No later-dated images found for backward propagation');
+            }
+          }
+          
         } else {
           console.log(`[NoteUI] Creating plant note for ${this.currentPlantId}`);
           await this.noteManager.addPlantNote(this.currentPlantId, noteData);
@@ -936,6 +1088,16 @@ export class NoteUI {
           // 🔧 FIX: Also update the image note button count overlay
           await this.updateImageNoteButton(this.currentPlantId, this.currentImageId);
           console.log('[NoteUI] ✅ 图像笔记徽章和按钮计数通过直接API刷新完成');
+          
+          // 🔧 NEW: Update badges for all affected images if backward propagation was used
+          if (enableBackwardPropagation) {
+            console.log('[NoteUI] Refreshing badges for all images affected by backward propagation...');
+            const laterImages = await this.getLaterDatedImages(this.currentPlantId, this.currentImageId);
+            for (const image of laterImages) {
+              await this.directUpdateThumbnailBadge(this.currentPlantId, image.id);
+            }
+            console.log(`[NoteUI] Updated badges for ${laterImages.length} propagated images`);
+          }
         }
         
         console.log('[NoteUI] 笔记徽章和按钮刷新完成');
