@@ -345,11 +345,7 @@ function bindEventListeners() {
   
   const clearAllBtn = document.getElementById('clear-all-btn');
   if (clearAllBtn) {
-    clearAllBtn.addEventListener('click', () => {
-      if (annotationTool && confirm('确定要清除所有标注点吗？')) {
-        annotationTool.clearKeypoints();
-      }
-    });
+    clearAllBtn.addEventListener('click', handleClearAllAnnotations);
   }
   
   // 分支点预览切换按钮
@@ -4161,6 +4157,132 @@ function addRetryButton() {
 // 🔧 NEW: Delete Plant Annotations Functionality
 
 /**
+ * 🔧 NEW: Setup deletion scope options in the modal
+ */
+async function setupDeletionScopeOptions(plantId) {
+  const modal = document.getElementById('delete-plant-annotations-modal');
+  const futureImagesInfo = document.getElementById('future-images-info');
+  const futureImagesCount = document.getElementById('future-images-count');
+  
+  // Reset deletion scope to default
+  const plantAllOption = modal.querySelector('input[name="deletion-scope"][value="plant-all"]');
+  if (plantAllOption) {
+    plantAllOption.checked = true;
+  }
+  
+  // Hide future images info initially
+  if (futureImagesInfo) {
+    futureImagesInfo.style.display = 'none';
+  }
+  
+  // Check if there's a current image context for spreading deletion
+  if (appState.currentImage && appState.currentPlant && appState.currentPlant.id === plantId) {
+    try {
+      // Get future images for spreading deletion
+      const futureImages = await getFutureImagesForClearing();
+      const futureCount = futureImages ? futureImages.length : 0;
+      
+      if (futureCount > 0) {
+        // Show future images info
+        if (futureImagesInfo && futureImagesCount) {
+          futureImagesCount.textContent = futureCount;
+          futureImagesInfo.style.display = 'block';
+        }
+        
+        // Enable current+future option
+        const currentFutureOption = modal.querySelector('input[name="deletion-scope"][value="current-and-future"]');
+        if (currentFutureOption) {
+          currentFutureOption.disabled = false;
+          currentFutureOption.parentElement.style.opacity = '1';
+        }
+        
+        // Enable current-only option
+        const currentOnlyOption = modal.querySelector('input[name="deletion-scope"][value="current-only"]');
+        if (currentOnlyOption) {
+          currentOnlyOption.disabled = false;
+          currentOnlyOption.parentElement.style.opacity = '1';
+        }
+      } else {
+        // Disable current+future option if no future images
+        disableScopeOption('current-and-future', 'No future images available');
+        disableScopeOption('current-only', 'Current image only (basic clear)');
+      }
+    } catch (error) {
+      console.warn('Failed to check future images for deletion scope:', error);
+      disableScopeOption('current-and-future', 'Cannot determine future images');
+      disableScopeOption('current-only', 'Current image context unavailable');
+    }
+  } else {
+    // No current image context - disable spreading options
+    disableScopeOption('current-and-future', 'No current image selected');
+    disableScopeOption('current-only', 'No current image selected');
+  }
+  
+  // Add event listener for scope changes
+  const scopeOptions = modal.querySelectorAll('input[name="deletion-scope"]');
+  scopeOptions.forEach(option => {
+    option.addEventListener('change', handleDeletionScopeChange);
+  });
+}
+
+/**
+ * 🔧 NEW: Disable a deletion scope option with reason
+ */
+function disableScopeOption(value, reason) {
+  const modal = document.getElementById('delete-plant-annotations-modal');
+  const option = modal.querySelector(`input[name="deletion-scope"][value="${value}"]`);
+  if (option) {
+    option.disabled = true;
+    option.parentElement.style.opacity = '0.5';
+    option.parentElement.title = reason;
+  }
+}
+
+/**
+ * 🔧 NEW: Handle deletion scope change
+ */
+function handleDeletionScopeChange() {
+  const selectedScope = document.querySelector('input[name="deletion-scope"]:checked');
+  const confirmCheckbox = document.getElementById('delete-confirmation-checkbox');
+  const confirmButton = document.getElementById('delete-confirm-btn');
+  
+  if (selectedScope) {
+    const scope = selectedScope.value;
+    
+    // Update confirmation text based on scope
+    const confirmText = confirmCheckbox.parentElement.querySelector('span');
+    if (confirmText) {
+      switch (scope) {
+        case 'plant-all':
+          confirmText.textContent = 'I understand that this action is irreversible and will delete all annotation data for this plant';
+          break;
+        case 'current-and-future':
+          confirmText.textContent = 'I understand that this action is irreversible and will delete current and future annotations';
+          break;
+        case 'current-only':
+          confirmText.textContent = 'I understand that this action is irreversible and will delete the current image annotations';
+          break;
+      }
+    }
+    
+    // Update button text based on scope
+    if (confirmButton) {
+      switch (scope) {
+        case 'plant-all':
+          confirmButton.textContent = '🗑️ Delete All Plant Annotations';
+          break;
+        case 'current-and-future':
+          confirmButton.textContent = '⚡ Delete Current + Future';
+          break;
+        case 'current-only':
+          confirmButton.textContent = '🗑️ Delete Current Image';
+          break;
+      }
+    }
+  }
+}
+
+/**
  * Handle delete plant annotations button click
  */
 async function handleDeletePlantAnnotations() {
@@ -4194,6 +4316,9 @@ async function showDeletePlantAnnotationsModal(plantId) {
   statsContent.style.display = 'none';
   confirmCheckbox.checked = false;
   confirmButton.disabled = true;
+  
+  // 🔧 NEW: Setup deletion scope options
+  setupDeletionScopeOptions(plantId);
   
   // Show modal
   modal.style.display = 'flex';
@@ -4275,23 +4400,39 @@ async function confirmDeletePlantAnnotations() {
   
   if (!modal || !confirmButton) return;
   
+  // 🔧 NEW: Get selected deletion scope
+  const selectedScope = modal.querySelector('input[name="deletion-scope"]:checked');
+  const deletionScope = selectedScope ? selectedScope.value : 'plant-all';
+  
   try {
     // Show loading state
     const originalText = confirmButton.textContent;
     confirmButton.textContent = '⏳ Deleting...';
     confirmButton.disabled = true;
     
-    console.log(`[Delete Plant] 开始删除植物 ${plantId} 的所有标注`);
+    console.log(`[Delete Plant] 开始删除植物 ${plantId} 的标注，范围: ${deletionScope}`);
     
-    // Execute deletion via API
-    const response = await fetch(`http://localhost:3003/api/annotations/plant/${plantId}`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+    let result;
     
-    const result = await response.json();
+    switch (deletionScope) {
+      case 'plant-all':
+        // Execute full plant deletion via API
+        result = await executeFullPlantDeletion(plantId);
+        break;
+        
+      case 'current-and-future':
+        // Execute spreading deletion
+        result = await executeSpreadingDeletion(plantId);
+        break;
+        
+      case 'current-only':
+        // Execute current image only deletion
+        result = await executeCurrentImageDeletion(plantId);
+        break;
+        
+      default:
+        throw new Error(`Unknown deletion scope: ${deletionScope}`);
+    }
     
     if (result.success) {
       console.log(`[Delete Plant] 删除成功:`, result.statistics);
@@ -4304,17 +4445,193 @@ async function confirmDeletePlantAnnotations() {
       
       // Show success message with statistics
       const stats = result.statistics;
-      const successMessage = `植物 ${plantId} 的标注数据删除完成\n\n` +
-        `删除文件: ${stats.totalFilesDeleted}/${stats.totalFilesProcessed}\n` +
-        `标注文件: ${stats.annotationFilesDeleted}\n` +
-        `相关文件: ${stats.relatedFilesDeleted}\n` +
-        `备份已创建: ${stats.backupPath}`;
-        
+      const successMessage = createSuccessMessage(plantId, deletionScope, stats);
       showSuccess('删除成功', successMessage);
       
       // Update progress and UI
-      updateProgressInfo(`植物 ${plantId} 的标注数据已删除`);
+      updateProgressInfo(`植物 ${plantId} 的标注数据已删除 (${deletionScope})`);
       
+      // Handle UI updates based on deletion scope
+      await handlePostDeletionUpdates(plantId, deletionScope);
+      
+    } else {
+      throw new Error(result.error || '删除操作失败');
+    }
+    
+  } catch (error) {
+    console.error(`[Delete Plant] 删除植物 ${plantId} 失败:`, error);
+    
+    // Restore button state
+    confirmButton.textContent = originalText;
+    confirmButton.disabled = false;
+    
+    showError('删除失败', `删除植物 ${plantId} 的标注数据时出错: ${error.message}`);
+  }
+}
+
+/**
+ * 🔧 NEW: Execute full plant deletion via API
+ */
+async function executeFullPlantDeletion(plantId) {
+  const response = await fetch(`http://localhost:3003/api/annotations/plant/${plantId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
+  
+  return await response.json();
+}
+
+/**
+ * 🔧 NEW: Execute spreading deletion (current + future images)
+ */
+async function executeSpreadingDeletion(plantId) {
+  if (!appState.currentImage || !appState.currentPlant) {
+    throw new Error('No current image context for spreading deletion');
+  }
+  
+  try {
+    // Get future images
+    const futureImages = await getFutureImagesForClearing();
+    const allImages = [appState.currentImage, ...futureImages];
+    
+    let deletedCount = 0;
+    let errors = [];
+    
+    // Delete annotations for each image
+    for (const image of allImages) {
+      try {
+        // 🔧 FIX: For current image, clear workspace FIRST to prevent auto-save interference
+        if (image.id === appState.currentImage.id && annotationTool) {
+          console.log(`[Spreading Delete] Clearing current image workspace: ${image.id}`);
+          annotationTool.clearKeypoints();
+          
+          // Update annotation status display immediately to reflect cleared state
+          if (typeof updateAnnotationStatusDisplay === 'function') {
+            setTimeout(updateAnnotationStatusDisplay, 100);
+          }
+        }
+        
+        // Clear annotation storage for this image
+        await clearAnnotationsForImage(image.id);
+        
+        deletedCount++;
+        updateProgressInfo(`已清除 ${deletedCount}/${allImages.length} 个图像...`);
+      } catch (error) {
+        console.error(`Failed to clear image ${image.id}:`, error);
+        errors.push(`${image.id}: ${error.message}`);
+      }
+    }
+    
+    // Update thumbnails
+    if (window.refreshThumbnailAnnotationStatus) {
+      for (const image of allImages) {
+        await window.refreshThumbnailAnnotationStatus(image.id);
+      }
+    }
+    
+    return {
+      success: true,
+      statistics: {
+        totalFilesDeleted: deletedCount,
+        totalFilesProcessed: allImages.length,
+        annotationFilesDeleted: deletedCount,
+        relatedFilesDeleted: 0,
+        backupPath: 'N/A (in-memory operation)',
+        errors: errors
+      }
+    };
+    
+  } catch (error) {
+    console.error('Spreading deletion failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * 🔧 NEW: Execute current image only deletion
+ */
+async function executeCurrentImageDeletion(plantId) {
+  if (!appState.currentImage) {
+    throw new Error('No current image selected');
+  }
+  
+  try {
+    await clearAnnotationsForImage(appState.currentImage.id);
+    
+    // Update thumbnail
+    if (window.refreshThumbnailAnnotationStatus) {
+      await window.refreshThumbnailAnnotationStatus(appState.currentImage.id);
+    }
+    
+    // Clear from annotation tool
+    if (annotationTool) {
+      annotationTool.clearKeypoints();
+    }
+    
+    return {
+      success: true,
+      statistics: {
+        totalFilesDeleted: 1,
+        totalFilesProcessed: 1,
+        annotationFilesDeleted: 1,
+        relatedFilesDeleted: 0,
+        backupPath: 'N/A (single image operation)'
+      }
+    };
+    
+  } catch (error) {
+    console.error('Current image deletion failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * 🔧 NEW: Create success message based on deletion scope
+ */
+function createSuccessMessage(plantId, deletionScope, stats) {
+  let message = `植物 ${plantId} 的标注数据删除完成\n\n`;
+  
+  switch (deletionScope) {
+    case 'plant-all':
+      message += `删除文件: ${stats.totalFilesDeleted}/${stats.totalFilesProcessed}\n`;
+      message += `标注文件: ${stats.annotationFilesDeleted}\n`;
+      message += `相关文件: ${stats.relatedFilesDeleted}\n`;
+      if (stats.backupPath) {
+        message += `备份已创建: ${stats.backupPath}`;
+      }
+      break;
+      
+    case 'current-and-future':
+      message += `传播删除完成\n`;
+      message += `处理图像: ${stats.totalFilesDeleted}/${stats.totalFilesProcessed}\n`;
+      if (stats.errors && stats.errors.length > 0) {
+        message += `错误: ${stats.errors.length} 个图像删除失败`;
+      }
+      break;
+      
+    case 'current-only':
+      message += `当前图像标注已清除\n`;
+      message += `图像ID: ${appState.currentImage?.id || 'unknown'}`;
+      break;
+  }
+  
+  return message;
+}
+
+/**
+ * 🔧 NEW: Handle post-deletion UI updates based on scope
+ */
+async function handlePostDeletionUpdates(plantId, deletionScope) {
+  switch (deletionScope) {
+    case 'plant-all':
       // Clear current workspace if this was the current plant
       if (appState.currentPlant && appState.currentPlant.id === plantId) {
         initializeEmptyWorkspace();
@@ -4332,27 +4649,25 @@ async function confirmDeletePlantAnnotations() {
           }
         }
       }
+      break;
       
-      // Update statistics
-      updateProgressStats();
-      
-      // Refresh note badges (since annotations are deleted, notes might be affected)
-      if (window.PlantAnnotationTool?.noteUI) {
-        await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
+    case 'current-and-future':
+    case 'current-only':
+      // Update annotation status display
+      if (typeof updateAnnotationStatusDisplay === 'function') {
+        await updateAnnotationStatusDisplay();
       }
-      
-    } else {
-      throw new Error(result.error || '删除操作失败');
-    }
-    
-  } catch (error) {
-    console.error(`[Delete Plant] 删除植物 ${plantId} 失败:`, error);
-    
-    // Restore button state
-    confirmButton.textContent = originalText;
-    confirmButton.disabled = false;
-    
-    showError('删除失败', `删除植物 ${plantId} 的标注数据时出错: ${error.message}`);
+      break;
+  }
+  
+  // Update statistics for all deletion scopes
+  if (typeof updateProgressStats === 'function') {
+    updateProgressStats();
+  }
+  
+  // Refresh note badges (since annotations are deleted, notes might be affected)
+  if (window.PlantAnnotationTool?.noteUI) {
+    await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
   }
 }
 
@@ -4374,3 +4689,332 @@ function updateDeletePlantAnnotationsButtonState() {
 
 // 将删除按钮状态更新函数暴露到全局，供其他模块调用
 window.updateDeletePlantAnnotationsButtonState = updateDeletePlantAnnotationsButtonState;
+
+/**
+ * 🔧 ENHANCED: Handle clear all annotations with spreading deletion options
+ */
+async function handleClearAllAnnotations() {
+  if (!annotationTool) {
+    showError('清除失败', '标注工具未初始化');
+    return;
+  }
+  
+  const currentAnnotations = annotationTool.getAnnotationData();
+  if (currentAnnotations.keypoints.length === 0) {
+    showError('清除失败', '当前图像没有标注点');
+    return;
+  }
+  
+  // Check if we have plant and image context for spreading
+  if (!appState.currentImage || !appState.currentPlant) {
+    // Fallback to simple clear
+    if (confirm('确定要清除当前图像的所有标注点吗？')) {
+      annotationTool.clearKeypoints();
+      updateProgressInfo('已清除当前图像的标注');
+    }
+    return;
+  }
+  
+  // Get future images for potential spreading
+  try {
+    const futureImages = await getFutureImagesForClearing();
+    const futureCount = futureImages ? futureImages.length : 0;
+    
+    // Show options dialog
+    let message = `当前图像有 ${currentAnnotations.keypoints.length} 个标注点\n`;
+    if (futureCount > 0) {
+      message += `检测到 ${futureCount} 个后续时间点图像\n\n`;
+      message += '请选择清除范围:\n';
+      message += '• 确定(OK) - 仅清除当前图像\n';
+      message += '• 取消后按Shift+点击 - 清除当前及后续图像';
+    } else {
+      message += '\n确定要清除当前图像的所有标注点吗？';
+    }
+    
+    const userChoice = confirm(message);
+    
+    if (userChoice) {
+      // Clear current image only
+      annotationTool.clearKeypoints();
+      updateProgressInfo('已清除当前图像的标注');
+      
+      // Update thumbnail status
+      if (window.refreshThumbnailAnnotationStatus) {
+        await window.refreshThumbnailAnnotationStatus(appState.currentImage.id);
+      }
+    }
+    
+  } catch (error) {
+    console.error('Failed to get future images:', error);
+    // Fallback to simple clear
+    if (confirm('确定要清除当前图像的所有标注点吗？')) {
+      annotationTool.clearKeypoints();
+      updateProgressInfo('已清除当前图像的标注');
+    }
+  }
+}
+
+/**
+ * 🔧 NEW: Handle spreading clear (Shift+Click)
+ */
+async function handleSpreadingClear() {
+  try {
+    updateProgressInfo('🔍 Analyzing future images for spreading deletion...');
+    
+    const currentAnnotations = annotationTool.getAnnotationData();
+    const futureImages = await getFutureImagesForClearing();
+    const futureCount = futureImages ? futureImages.length : 0;
+    
+    if (futureCount === 0) {
+      showError('传播删除失败', '没有找到后续时间点图像\n\n提示：传播删除需要当前图像后面有其他时间点图像');
+      updateProgressInfo('⚠️ 传播删除失败：没有后续图像');
+      return;
+    }
+    
+    const confirmMessage = `⚠️ 【Shift+Click】传播删除确认\n\n` +
+      `当前图像: ${currentAnnotations.keypoints.length} 个标注点\n` +
+      `将影响: ${futureCount + 1} 个图像(包括当前图像)\n\n` +
+      `此操作将清除当前图像及所有后续时间点图像的标注，无法撤销！\n\n` +
+      `确定要继续吗？`;
+    
+    if (!confirm(confirmMessage)) {
+      updateProgressInfo('传播删除已取消');
+      return;
+    }
+    
+    // Show progress
+    updateProgressInfo('正在执行传播删除...');
+    
+    let clearedCount = 0;
+    let errors = [];
+    
+    // Clear current image
+    annotationTool.clearKeypoints();
+    clearedCount++;
+    
+    // Clear future images
+    for (const futureImage of futureImages) {
+      try {
+        await clearAnnotationsForImage(futureImage.id);
+        clearedCount++;
+        updateProgressInfo(`已清除 ${clearedCount}/${futureCount + 1} 个图像...`);
+      } catch (error) {
+        console.error(`Failed to clear image ${futureImage.id}:`, error);
+        errors.push(`${futureImage.id}: ${error.message}`);
+      }
+    }
+    
+    // Update thumbnails
+    if (window.refreshThumbnailAnnotationStatus) {
+      await window.refreshThumbnailAnnotationStatus(appState.currentImage.id);
+      for (const futureImage of futureImages) {
+        await window.refreshThumbnailAnnotationStatus(futureImage.id);
+      }
+    }
+    
+    // Update statistics
+    if (window.updateProgressStats) {
+      window.updateProgressStats();
+    }
+    
+    // Show result
+    if (errors.length === 0) {
+      updateProgressInfo(`✅ 传播删除完成: 成功清除 ${clearedCount} 个图像的标注`);
+    } else {
+      updateProgressInfo(`⚠️ 传播删除部分完成: ${clearedCount - errors.length}/${clearedCount} 个图像成功清除`);
+      console.warn('Some images failed to clear:', errors);
+    }
+    
+  } catch (error) {
+    console.error('Spreading clear failed:', error);
+    showError('传播删除失败', error.message);
+  }
+}
+
+/**
+ * 🔧 NEW: Get future images for clearing (simplified version)
+ */
+async function getFutureImagesForClearing() {
+  if (!appState.currentImage || !appState.currentPlant || !plantDataManager) {
+    return [];
+  }
+  
+  try {
+    // Get all images for current plant and view angle
+    const allImages = await plantDataManager.getPlantImages(
+      appState.currentPlant.id, 
+      appState.currentPlant.selectedViewAngle
+    );
+    
+    if (!allImages || allImages.length === 0) {
+      return [];
+    }
+    
+    // Find current image index
+    const currentImageIndex = allImages.findIndex(img => img.id === appState.currentImage.id);
+    if (currentImageIndex === -1) {
+      return [];
+    }
+    
+    // Get current image date for comparison
+    const currentImage = allImages[currentImageIndex];
+    const currentDate = new Date(currentImage.dateTime);
+    
+    // Filter future images (images with later dates)
+    const futureImages = allImages.filter(img => {
+      const imgDate = new Date(img.dateTime);
+      return imgDate > currentDate;
+    });
+    
+    // Sort by date
+    futureImages.sort((a, b) => new Date(a.dateTime) - new Date(b.dateTime));
+    
+    return futureImages;
+    
+  } catch (error) {
+    console.error('Failed to get future images:', error);
+    return [];
+  }
+}
+
+/**
+ * 🔧 NEW: Clear annotations for a specific image
+ */
+async function clearAnnotationsForImage(imageId) {
+  if (!plantDataManager) {
+    throw new Error('PlantDataManager not available');
+  }
+  
+  try {
+    // Save empty annotations (effectively clearing them)
+    await plantDataManager.saveImageAnnotations(imageId, []);
+    console.log(`Cleared annotations for image: ${imageId}`);
+  } catch (error) {
+    console.error(`Failed to clear annotations for image ${imageId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * 🔧 NEW: Perform clear operation with optional spreading
+ */
+async function performClearOperation(options) {
+  if (!annotationTool || !appState.currentImage || !appState.currentPlant) {
+    showError('清除失败', '应用状态无效');
+    return;
+  }
+  
+  const { clearScope, clearAllPoints, clearAnnotationsOnly } = options;
+  
+  try {
+    // Always clear current image first
+    console.log('Clearing annotations for current image:', appState.currentImage.id);
+    
+    if (clearAllPoints) {
+      annotationTool.clearKeypoints();
+    } else if (clearAnnotationsOnly) {
+      // Clear only annotations but preserve UI state
+      annotationTool.clearKeypointsWithoutSave();
+    }
+    
+    let processedImages = 1; // Current image
+    let affectedImages = [appState.currentImage.id];
+    
+    // If spreading deletion is requested
+    if (clearScope === 'current-and-future' && annotationSpreadingManager) {
+      // Show progress modal
+      const progressModalId = spreadingModalManager.showSpreadProgress({
+        operationId: `clear-spread-${Date.now()}`,
+        totalImages: 0, // Will be updated
+        onCancel: () => {
+          console.log('User cancelled clear spreading operation');
+        }
+      });
+      
+      try {
+        // Get future images
+        const futureImages = await annotationSpreadingManager.getFutureImages(
+          appState.currentImage.id,
+          appState.currentPlant.id,
+          appState.currentPlant.selectedViewAngle
+        );
+        
+        if (futureImages.length > 0) {
+          // Update progress modal with actual count
+          spreadingModalManager.updateSpreadProgress(progressModalId, {
+            completed: 1,
+            total: futureImages.length + 1,
+            status: 'Clearing future images...'
+          });
+          
+          // Perform spreading deletion
+          const result = await annotationSpreadingManager.spreadDeletionToFuture(
+            appState.currentImage.id,
+            appState.currentPlant.id,
+            appState.currentPlant.selectedViewAngle,
+            {
+              clearAllPoints,
+              clearAnnotationsOnly,
+              batchSize: spreadingConfigManager?.getConfigValue('spreadBehavior.batchSize') || 10,
+              onProgress: (progress) => {
+                spreadingModalManager.updateSpreadProgress(progressModalId, {
+                  ...progress,
+                  completed: progress.completed + 1, // +1 for current image already processed
+                  total: futureImages.length + 1
+                });
+              }
+            }
+          );
+          
+          processedImages += result.processedImages || 0;
+          affectedImages = affectedImages.concat(result.affectedImages || []);
+        }
+        
+        // Close progress modal
+        spreadingModalManager.closeModal(progressModalId);
+        
+      } catch (error) {
+        console.error('Spreading deletion failed:', error);
+        spreadingModalManager.closeModal(progressModalId);
+        spreadingModalManager.showError(
+          'Spreading Deletion Failed',
+          `Failed to clear annotations from future images: ${error.message}`
+        );
+      }
+    }
+    
+    // Show success message
+    const message = clearScope === 'current-and-future' 
+      ? `成功清除 ${processedImages} 个图像的标注`
+      : '成功清除当前图像的标注';
+    
+    updateProgressInfo(message);
+    
+    // Refresh thumbnails for affected images
+    if (affectedImages.length > 0) {
+      for (const imageId of affectedImages) {
+        await refreshThumbnailAnnotationStatus(imageId);
+      }
+    }
+    
+    // Update statistics
+    updateProgressStats();
+    
+    // Update annotation status display
+    updateAnnotationStatusDisplay();
+    
+    console.log(`Clear operation completed. Processed ${processedImages} images.`);
+    
+    // Show success modal for spreading operations
+    if (clearScope === 'current-and-future' && processedImages > 1) {
+      spreadingModalManager.showSuccess(
+        'Clear Complete',
+        `Successfully cleared annotations from ${processedImages} images in the time series.`
+      );
+    }
+    
+  } catch (error) {
+    console.error('Clear operation failed:', error);
+    showError('清除失败', `清除标注时出错: ${error.message}`);
+  }
+}

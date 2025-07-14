@@ -809,7 +809,7 @@ export class BranchPointPreviewManager {
     this.previousAnnotations = [];
     
     if (this.isVisible) {
-      this.showNoPreview('请选择图像');
+      this.showNoPreview('Please choose an image');
     }
   }
 
