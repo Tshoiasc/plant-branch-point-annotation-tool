@@ -2,7 +2,8 @@
 
 A professional annotation tool designed for processing Brassica napus (rapeseed) datasets, featuring keypoint annotation, time-series analysis, real-time UI synchronization, and comprehensive data export capabilities.
 
-![Preview](preview.png)
+<img width="5320" height="2836" alt="preview" src="https://github.com/user-attachments/assets/4b5c12ea-6458-48bc-aebf-73142078a21e" />
+
 
 ## 🚀 Quick Start
 
