@@ -1060,6 +1060,9 @@ export class AnnotationTool {
         // 这是拖拽，保存状态
         this.saveState();
         this.autoSaveCurrentImage();
+        
+        // 🔄 NEW: 实时同步 - 标注点移动
+        this.triggerRealTimeSync('MOVE_KEYPOINT', this.draggedKeypoint, this.state.dragStartPoint);
       }
 
       // 重置拖拽状态
@@ -1827,6 +1830,9 @@ export class AnnotationTool {
     // 自动保存到当前图像
     this.autoSaveCurrentImage();
 
+    // 🔄 NEW: 实时同步 - 标注点添加
+    this.triggerRealTimeSync('ADD_KEYPOINT', keypoint);
+
     // 同步分支点预览
     this.syncBranchPointPreview();
 
@@ -2481,6 +2487,69 @@ export class AnnotationTool {
       
     } catch (error) {
       console.error('自动保存失败:', error);
+    }
+  }
+
+  /**
+   * 🔄 触发实时同步操作
+   * @param {string} operationType - 操作类型 ('ADD_KEYPOINT', 'MOVE_KEYPOINT')
+   * @param {object} keypoint - 相关的关键点数据
+   * @param {object} previousPosition - 之前的位置（仅移动操作需要）
+   */
+  triggerRealTimeSync(operationType, keypoint, previousPosition = null) {
+    try {
+      // 获取实时同步管理器
+      const realTimeSyncManager = window.PlantAnnotationTool?.realTimeSyncManager;
+      
+      if (!realTimeSyncManager) {
+        console.warn('🔄 实时同步管理器未找到，跳过同步操作');
+        return;
+      }
+
+      // 检查是否启用了实时同步
+      if (!realTimeSyncManager.isRealTimeSyncEnabled()) {
+        console.log('🔄 实时同步已禁用，跳过同步操作');
+        return;
+      }
+
+      // 获取当前上下文
+      const appState = window.PlantAnnotationTool?.appState;
+      if (!appState?.currentPlant || !appState?.currentImage) {
+        console.warn('🔄 缺少当前植株或图像信息，跳过同步操作');
+        return;
+      }
+
+      console.log(`🔄 触发实时同步: ${operationType}`, {
+        keypoint: keypoint?.id,
+        plant: appState.currentPlant.id,
+        image: appState.currentImage.id
+      });
+
+      // 根据操作类型触发相应的同步
+      switch (operationType) {
+        case 'ADD_KEYPOINT':
+          realTimeSyncManager.triggerKeypointAddSync(
+            keypoint,
+            appState.currentImage,
+            appState.currentPlant
+          );
+          break;
+          
+        case 'MOVE_KEYPOINT':
+          realTimeSyncManager.triggerKeypointMoveSync(
+            keypoint,
+            previousPosition,
+            appState.currentImage,
+            appState.currentPlant
+          );
+          break;
+          
+        default:
+          console.warn(`🔄 未知的同步操作类型: ${operationType}`);
+      }
+      
+    } catch (error) {
+      console.error('🔄 触发实时同步失败:', error);
     }
   }
 

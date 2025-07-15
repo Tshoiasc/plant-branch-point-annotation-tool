@@ -302,6 +302,69 @@ export class AnnotationStorageManager {
   }
 
   /**
+   * 🔧 NEW: 移除植株跳过信息
+   */
+  async removeSkipInfo(plantId) {
+    try {
+      // 从内存中移除跳过状态
+      const annotationData = this.annotations.get(plantId);
+      if (annotationData) {
+        delete annotationData.status;
+        delete annotationData.skipReason;
+        delete annotationData.skipDate;
+        annotationData.lastModified = new Date().toISOString();
+        
+        // 如果没有其他数据，完全移除
+        if (!annotationData.annotations || annotationData.annotations.length === 0) {
+          this.annotations.delete(plantId);
+        }
+      }
+
+      // 从文件系统或HTTP后端移除
+      if (this.useFileSystem && this.fileSystemManager.deleteSkipInfo) {
+        try {
+          // HTTP模式：通过API移除跳过信息
+          await this.fileSystemManager.deleteSkipInfo(plantId);
+          console.log(`植株 ${plantId} 跳过信息已从后端移除`);
+        } catch (apiError) {
+          console.warn('后端移除失败，使用localStorage清理:', apiError);
+          this.saveToLocalStorage();
+          console.log(`植株 ${plantId} 跳过信息已从localStorage清理`);
+        }
+      } else if (this.fileSystemManager && this.fileSystemManager.getAnnotationsDirectory()) {
+        try {
+          // 原有的文件系统模式：删除跳过信息文件
+          const fileName = `${plantId}_skip_info.json`;
+          const annotationsHandle = this.fileSystemManager.getAnnotationsDirectory();
+          
+          try {
+            await annotationsHandle.removeEntry(fileName);
+            console.log(`植株 ${plantId} 跳过信息文件已删除: ${fileName}`);
+          } catch (removeError) {
+            // 文件不存在是正常的
+            if (removeError.name !== 'NotFoundError') {
+              throw removeError;
+            }
+            console.log(`植株 ${plantId} 跳过信息文件不存在，无需删除`);
+          }
+        } catch (fsError) {
+          console.warn('文件系统删除失败，使用localStorage清理:', fsError);
+          this.saveToLocalStorage();
+          console.log(`植株 ${plantId} 跳过信息已从localStorage清理`);
+        }
+      } else {
+        // 如果文件系统不可用，从localStorage清理
+        this.saveToLocalStorage();
+        console.log(`植株 ${plantId} 跳过信息已从localStorage清理`);
+      }
+
+    } catch (error) {
+      console.error(`移除植株 ${plantId} 跳过信息失败:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * 🔧 FIX: Save plant status independently of annotations
    */
   async savePlantStatus(plantId, status) {

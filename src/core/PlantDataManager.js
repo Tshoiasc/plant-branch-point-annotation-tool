@@ -565,6 +565,81 @@ export class PlantDataManager {
   }
 
   /**
+   * 🔧 NEW: 撤销跳过植株
+   */
+  async unskipPlant(plantId) {
+    const plant = this.plants.get(plantId);
+    if (!plant) {
+      throw new Error(`植株 ${plantId} 不存在`);
+    }
+
+    if (plant.status !== 'skipped') {
+      throw new Error(`植株 ${plantId} 当前状态不是跳过状态`);
+    }
+
+    try {
+      // 确定新状态：如果有标注数据则为 in-progress，否则为 pending
+      const annotations = await this.getPlantAnnotations(plantId);
+      const newStatus = (annotations && annotations.length > 0) ? 'in-progress' : 'pending';
+
+      // 更新植株状态
+      plant.status = newStatus;
+      plant.lastModified = new Date().toISOString();
+      
+      // 清除跳过相关信息
+      delete plant.skipReason;
+      delete plant.skipDate;
+
+      // 移除持久化存储中的跳过信息
+      await this.annotationStorage.removeSkipInfo(plantId);
+      
+      // 更新植株状态到持久化存储
+      await this.annotationStorage.savePlantStatus(plantId, newStatus);
+
+      console.log(`植株 ${plantId} 已撤销跳过状态，新状态: ${newStatus}`);
+      this.emitPlantUpdated(plant);
+
+    } catch (error) {
+      console.error(`撤销植株 ${plantId} 跳过状态失败:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 🔧 NEW: 撤销完成植株
+   */
+  async uncompletePlant(plantId) {
+    const plant = this.plants.get(plantId);
+    if (!plant) {
+      throw new Error(`植株 ${plantId} 不存在`);
+    }
+
+    if (plant.status !== 'completed') {
+      throw new Error(`植株 ${plantId} 当前状态不是已完成状态`);
+    }
+
+    try {
+      // 确定新状态：如果有标注数据则为 in-progress，否则为 pending
+      const annotations = await this.getPlantAnnotations(plantId);
+      const newStatus = (annotations && annotations.length > 0) ? 'in-progress' : 'pending';
+
+      // 更新植株状态
+      plant.status = newStatus;
+      plant.lastModified = new Date().toISOString();
+
+      // 更新植株状态到持久化存储
+      await this.annotationStorage.savePlantStatus(plantId, newStatus);
+
+      console.log(`植株 ${plantId} 已撤销完成状态，新状态: ${newStatus}`);
+      this.emitPlantUpdated(plant);
+
+    } catch (error) {
+      console.error(`撤销植株 ${plantId} 完成状态失败:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * 设置植物的选中视角
    */
   setSelectedViewAngle(plantId, viewAngle) {

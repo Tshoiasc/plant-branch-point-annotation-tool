@@ -16,6 +16,7 @@ import { NoteManager } from './core/NoteManager.js';
 import { NoteUI } from './core/NoteUI.js';
 import { AnnotationManager } from './core/AnnotationManager.js';
 import { BulkLoadingPerformanceMonitor } from './utils/BulkLoadingPerformanceMonitor.js';
+import RealTimeSyncManager from './core/RealTimeSyncManager.js';
 
 // 🔧 FIX: Global error handling to prevent uncaught promise errors
 window.addEventListener('unhandledrejection', (event) => {
@@ -70,6 +71,7 @@ let branchPointPreviewManager = null;
 let noteManager = null;
 let noteUI = null;
 let annotationManager = null;
+let realTimeSyncManager = null;
 let performanceMonitor = null;
 let currentDataset = null;
 
@@ -169,6 +171,18 @@ async function initializeApp() {
       console.log('标注管理器初始化成功');
     } catch (error) {
       console.warn('AnnotationManager初始化延迟:', error.message);
+    }
+    
+    updateFullscreenLoading(63, 'Setting up real-time sync...', 'Initializing real-time synchronization manager');
+    
+    // 初始化实时同步管理器
+    try {
+      realTimeSyncManager = new RealTimeSyncManager(plantDataManager, plantDataManager.annotationStorage);
+      
+      window.PlantAnnotationTool.realTimeSyncManager = realTimeSyncManager;
+      console.log('🔄 实时同步管理器初始化成功');
+    } catch (error) {
+      console.warn('🔄 RealTimeSyncManager初始化延迟:', error.message);
     }
     
     updateFullscreenLoading(65, 'Setting up performance monitoring...', 'Initializing bulk loading performance tracking');
@@ -380,6 +394,12 @@ function bindEventListeners() {
     autoMoveCheckbox.addEventListener('change', handleAutoMoveChange);
   }
 
+  // 🔄 实时变更同步控件
+  const realTimeChangeCheckbox = document.getElementById('real-time-change-checkbox');
+  if (realTimeChangeCheckbox) {
+    realTimeChangeCheckbox.addEventListener('change', handleRealTimeChangeChange);
+  }
+
   // 跳过植株模态框事件
   const skipModalClose = document.getElementById('skip-modal-close');
   const skipCancelBtn = document.getElementById('skip-cancel-btn');
@@ -517,6 +537,59 @@ function bindEventListeners() {
     saveAnnotationModal.addEventListener('click', (e) => {
       if (e.target === saveAnnotationModal) {
         hideSaveAnnotationModal();
+      }
+    });
+  }
+  
+  // 🔧 NEW: Unskip Plant Modal Events
+  const unskipModalClose = document.getElementById('unskip-modal-close');
+  const unskipCancelBtn = document.getElementById('unskip-cancel-btn');
+  const unskipConfirmBtn = document.getElementById('unskip-confirm-btn');
+  
+  if (unskipModalClose) {
+    unskipModalClose.addEventListener('click', hideUnskipPlantModal);
+  }
+  
+  if (unskipCancelBtn) {
+    unskipCancelBtn.addEventListener('click', hideUnskipPlantModal);
+  }
+  
+  if (unskipConfirmBtn) {
+    unskipConfirmBtn.addEventListener('click', confirmUnskipPlant);
+  }
+  
+  // 🔧 NEW: Uncomplete Plant Modal Events
+  const uncompleteModalClose = document.getElementById('uncomplete-modal-close');
+  const uncompleteCancelBtn = document.getElementById('uncomplete-cancel-btn');
+  const uncompleteConfirmBtn = document.getElementById('uncomplete-confirm-btn');
+  
+  if (uncompleteModalClose) {
+    uncompleteModalClose.addEventListener('click', hideUncompletePlantModal);
+  }
+  
+  if (uncompleteCancelBtn) {
+    uncompleteCancelBtn.addEventListener('click', hideUncompletePlantModal);
+  }
+  
+  if (uncompleteConfirmBtn) {
+    uncompleteConfirmBtn.addEventListener('click', confirmUncompletePlant);
+  }
+  
+  // 🔧 NEW: Modal background click close events
+  const unskipModal = document.getElementById('unskip-plant-modal');
+  if (unskipModal) {
+    unskipModal.addEventListener('click', (e) => {
+      if (e.target === unskipModal) {
+        hideUnskipPlantModal();
+      }
+    });
+  }
+  
+  const uncompleteModal = document.getElementById('uncomplete-plant-modal');
+  if (uncompleteModal) {
+    uncompleteModal.addEventListener('click', (e) => {
+      if (e.target === uncompleteModal) {
+        hideUncompletePlantModal();
       }
     });
   }
@@ -838,19 +911,30 @@ function createPlantListItem(plant) {
   const selectedViewText = plant.selectedViewAngle ? 
     `Chosen: ${plant.selectedViewAngle}` : '';
   
-  // Skip status handling
+  // 🔧 NEW: State-based button system for skip/unskip and complete/uncomplete
   const isSkipped = plant.status === 'skipped';
+  const isCompleted = plant.status === 'completed';
+  
+  // 🔧 FIX: Ensure CSS classes reflect current state
   if (isSkipped) {
     item.classList.add('skipped');
+  } else {
+    item.classList.remove('skipped');
   }
 
   // Skip reason display
   const skipReasonHtml = isSkipped && plant.skipReason ?
     `<div class="skip-reason">skip reason: ${plant.skipReason}</div>` : '';
 
-  // Skip button (only show when not skipped)
-  const skipButtonHtml = !isSkipped ?
-    `<button class="skip-button" onclick="showSkipPlantModal('${plant.id}', event)">Skip</button>` : '';
+  // 🔧 NEW: Dynamic button generation based on plant state
+  let stateButtonsHtml = '';
+  
+  // Only Skip/Unskip button - Complete functionality is handled by main interface
+  if (isSkipped) {
+    stateButtonsHtml += `<button class="skip-button unskip-variant" onclick="handleUnskipPlant('${plant.id}', event)">Unskip</button>`;
+  } else {
+    stateButtonsHtml += `<button class="skip-button" onclick="showSkipPlantModal('${plant.id}', event)">Skip</button>`;
+  }
 
   item.innerHTML = `
     <div class="plant-item-content">
@@ -859,7 +943,7 @@ function createPlantListItem(plant) {
         <div class="plant-id">${plant.id}</div>
         <div class="right-box">
           <div class="plant-note-badge" id="note-badge-${plant.id}" style="display: none;"></div>
-          ${skipButtonHtml}
+          <div class="state-buttons">${stateButtonsHtml}</div>
         </div>
       </div>
       <div class="plant-info">
@@ -1026,6 +1110,9 @@ function initializeEmptyWorkspace() {
   
   // 🔧 NEW: Update delete button state when workspace is empty
   updateDeletePlantAnnotationsButtonState();
+  
+  // 🔧 NEW: Update complete plant button state when workspace is empty
+  updateCompletePlantButtonState();
 }
 
 /**
@@ -1148,6 +1235,9 @@ async function handlePlantSelect(plant) {
     
     // 🔧 NEW: Update delete button state when plant is selected
     updateDeletePlantAnnotationsButtonState();
+    
+    // 🔧 NEW: Update complete plant button state when plant is selected
+    updateCompletePlantButtonState();
     
   } catch (error) {
     console.error('选择植物失败:', error);
@@ -1874,7 +1964,7 @@ async function performSaveAnnotation(isManualAdjustment) {
 }
 
 /**
- * 处理完成植物
+ * 🔧 NEW: 处理完成/撤销完成植物 (统一处理函数)
  */
 function handleCompletePlant() {
   if (!appState.currentPlant) {
@@ -1882,27 +1972,63 @@ function handleCompletePlant() {
     return;
   }
   
-  try {
-    // 标记植物为已完成
-    plantDataManager.updatePlantStatus(appState.currentPlant.id, 'completed');
-    
-    // 更新统计显示
-    updateProgressStats();
-    
-    // 查找下一个未完成的植物
-    const nextPlant = plantDataManager.getNextPendingPlant(appState.currentPlant.id);
-    
-    if (nextPlant) {
-      // 自动跳转到下一个植物
-      handlePlantSelect(nextPlant);
-      updateProgressInfo(`已完成 ${appState.currentPlant.id}，跳转到 ${nextPlant.id}`);
-    } else {
-      updateProgressInfo('恭喜！所有植物都已完成标注');
+  const plant = appState.currentPlant;
+  
+  // 根据当前状态决定操作
+  if (plant.status === 'completed') {
+    // 如果已完成，则撤销完成
+    showUncompletePlantModal(plant.id);
+  } else {
+    // 如果未完成，则完成植物
+    if (plant.status === 'skipped') {
+      showError('操作错误', '无法完成已跳过的植株，请先撤销跳过');
+      return;
     }
     
-  } catch (error) {
-    console.error('完成植物失败:', error);
-    showError('操作失败', error.message);
+    const confirmMessage = `确定要标记植株 "${plant.id}" 为已完成吗？`;
+    
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+    
+    try {
+      // 标记植物为已完成
+      plantDataManager.updatePlantStatus(plant.id, 'completed');
+      plant.status = 'completed';
+      
+      // 重新渲染植株列表项
+      const plantItem = document.querySelector(`[data-plant-id="${plant.id}"]`);
+      if (plantItem) {
+        const newItem = createPlantListItem(plant);
+        plantItem.parentNode.replaceChild(newItem, plantItem);
+      }
+      
+      // 更新统计显示
+      updateProgressStats();
+      
+      // 更新按钮状态
+      updateCompletePlantButtonState();
+      
+      showSuccess('完成成功', `植株 ${plant.id} 已标记为完成`);
+      
+      // 查找下一个未完成的植物
+      const nextPlant = plantDataManager.getNextPendingPlant(plant.id);
+      
+      if (nextPlant) {
+        // 询问是否跳转到下一个植物
+        const shouldNavigate = confirm(`植株 ${plant.id} 已完成！\n\n是否跳转到下一个未完成的植株 ${nextPlant.id}？`);
+        if (shouldNavigate) {
+          handlePlantSelect(nextPlant);
+          updateProgressInfo(`已完成 ${plant.id}，跳转到 ${nextPlant.id}`);
+        }
+      } else {
+        updateProgressInfo('恭喜！所有植物都已完成标注');
+      }
+      
+    } catch (error) {
+      console.error('完成植物失败:', error);
+      showError('操作失败', error.message);
+    }
   }
 }
 
@@ -3686,6 +3812,54 @@ async function confirmSkipPlant() {
 }
 
 /**
+ * 🔧 NEW: 处理撤销跳过植株 - 显示确认模态框
+ */
+async function handleUnskipPlant(plantId, event) {
+  // 阻止事件冒泡，避免触发植株选择
+  if (event) {
+    event.stopPropagation();
+  }
+
+  const plant = appState.plants.find(p => p.id === plantId);
+  if (!plant) {
+    showError('错误', '未找到指定的植株');
+    return;
+  }
+
+  if (plant.status !== 'skipped') {
+    showError('操作错误', '植株当前状态不是跳过状态');
+    return;
+  }
+
+  // 显示撤销跳过确认模态框
+  showUnskipPlantModal(plantId, plant.skipReason);
+}
+
+/**
+ * 🔧 NEW: 处理撤销完成植株 - 显示确认模态框
+ */
+async function handleUncompletePlant(plantId, event) {
+  // 阻止事件冒泡，避免触发植株选择
+  if (event) {
+    event.stopPropagation();
+  }
+
+  const plant = appState.plants.find(p => p.id === plantId);
+  if (!plant) {
+    showError('错误', '未找到指定的植株');
+    return;
+  }
+
+  if (plant.status !== 'completed') {
+    showError('操作错误', '植株当前状态不是已完成状态');
+    return;
+  }
+
+  // 显示撤销完成确认模态框
+  showUncompletePlantModal(plantId);
+}
+
+/**
  * 处理状态过滤器变化
  */
 function handleStatusFilterChange() {
@@ -3740,10 +3914,188 @@ function applyPlantsFilter(status, searchQuery) {
   console.log(`过滤结果: 状态=${status}, 搜索="${searchQuery}", 结果=${filteredPlants.length}个植株`);
 }
 
+/**
+ * 🔧 NEW: 显示撤销跳过植株模态框
+ */
+function showUnskipPlantModal(plantId, skipReason) {
+  const modal = document.getElementById('unskip-plant-modal');
+  const plantIdElement = document.getElementById('unskip-plant-id');
+  const skipReasonElement = document.getElementById('unskip-skip-reason');
+  const newStatusElement = document.getElementById('unskip-new-status');
+  
+  if (!modal) {
+    console.error('Unskip plant modal not found');
+    return;
+  }
+
+  // 设置植株信息
+  if (plantIdElement) {
+    plantIdElement.textContent = plantId;
+  }
+  
+  if (skipReasonElement) {
+    skipReasonElement.textContent = skipReason || '无';
+  }
+
+  // 🔧 FIX: Set the new status that will be applied
+  if (newStatusElement) {
+    newStatusElement.textContent = 'Pending (will be determined by annotations)';
+  }
+
+  // 显示模态框
+  modal.style.display = 'flex';
+  modal.dataset.plantId = plantId;
+}
+
+/**
+ * 🔧 NEW: 隐藏撤销跳过植株模态框
+ */
+function hideUnskipPlantModal() {
+  const modal = document.getElementById('unskip-plant-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.dataset.plantId = '';
+  }
+}
+
+/**
+ * 🔧 NEW: 确认撤销跳过植株
+ */
+async function confirmUnskipPlant() {
+  const modal = document.getElementById('unskip-plant-modal');
+  const plantId = modal?.dataset.plantId;
+
+  if (!plantId) {
+    showError('错误', '未找到要撤销跳过的植株');
+    return;
+  }
+
+  try {
+    // 调用PlantDataManager的撤销跳过方法
+    await plantDataManager.unskipPlant(plantId);
+    console.log(`[Debug] 后端unskip操作完成，植物ID: ${plantId}`);
+
+    // 更新本地植株对象
+    const plant = appState.plants.find(p => p.id === plantId);
+    if (plant) {
+      console.log(`[Debug] 更新前植物状态: ${plant.status}, skipReason: ${plant.skipReason}`);
+      
+      const annotations = await plantDataManager.getPlantAnnotations(plantId);
+      plant.status = (annotations && annotations.length > 0) ? 'in-progress' : 'pending';
+      delete plant.skipReason;
+      delete plant.skipDate;
+      
+      console.log(`[Debug] 更新后植物状态: ${plant.status}, skipReason: ${plant.skipReason}`);
+
+      // 重新渲染植株列表项
+      const plantItem = document.querySelector(`[data-plant-id="${plantId}"]`);
+      if (plantItem) {
+        const newItem = createPlantListItem(plant);
+        plantItem.parentNode.replaceChild(newItem, plantItem);
+        console.log(`[Debug] 植物列表项已重新渲染: ${plantId}`);
+      }
+
+      // 更新统计
+      updateProgressStats();
+      
+      // 🔧 NEW: Update complete plant button state after uncomplete
+      updateCompletePlantButtonState();
+    }
+
+    hideUnskipPlantModal();
+    showSuccess('撤销成功', `植株 ${plantId} 已恢复到正常状态`);
+
+  } catch (error) {
+    console.error('撤销跳过植株失败:', error);
+    showError('撤销失败', error.message);
+  }
+}
+
+/**
+ * 🔧 NEW: 显示撤销完成植株模态框
+ */
+function showUncompletePlantModal(plantId) {
+  const modal = document.getElementById('uncomplete-plant-modal');
+  const plantIdElement = document.getElementById('uncomplete-plant-id');
+  
+  if (!modal) {
+    console.error('Uncomplete plant modal not found');
+    return;
+  }
+
+  // 设置植株信息
+  if (plantIdElement) {
+    plantIdElement.textContent = plantId;
+  }
+
+  // 显示模态框
+  modal.style.display = 'flex';
+  modal.dataset.plantId = plantId;
+}
+
+/**
+ * 🔧 NEW: 隐藏撤销完成植株模态框
+ */
+function hideUncompletePlantModal() {
+  const modal = document.getElementById('uncomplete-plant-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.dataset.plantId = '';
+  }
+}
+
+/**
+ * 🔧 NEW: 确认撤销完成植株
+ */
+async function confirmUncompletePlant() {
+  const modal = document.getElementById('uncomplete-plant-modal');
+  const plantId = modal?.dataset.plantId;
+
+  if (!plantId) {
+    showError('错误', '未找到要撤销完成的植株');
+    return;
+  }
+
+  try {
+    // 调用PlantDataManager的撤销完成方法
+    await plantDataManager.uncompletePlant(plantId);
+
+    // 更新本地植株对象
+    const plant = appState.plants.find(p => p.id === plantId);
+    if (plant) {
+      const annotations = await plantDataManager.getPlantAnnotations(plantId);
+      plant.status = (annotations && annotations.length > 0) ? 'in-progress' : 'pending';
+
+      // 重新渲染植株列表项
+      const plantItem = document.querySelector(`[data-plant-id="${plantId}"]`);
+      if (plantItem) {
+        const newItem = createPlantListItem(plant);
+        plantItem.parentNode.replaceChild(newItem, plantItem);
+      }
+
+      // 更新统计
+      updateProgressStats();
+      
+      // 🔧 NEW: Update complete plant button state after uncomplete
+      updateCompletePlantButtonState();
+    }
+
+    hideUncompletePlantModal();
+    showSuccess('撤销成功', `植株 ${plantId} 已恢复到进行中状态`);
+
+  } catch (error) {
+    console.error('撤销完成植株失败:', error);
+    showError('撤销失败', error.message);
+  }
+}
+
 // 将函数添加到全局对象，以便AnnotationTool可以访问
 window.handleAutoDirectionSelection = handleAutoDirectionSelection;
 window.navigateToNextImage = navigateToNextImage;
 window.showSkipPlantModal = showSkipPlantModal;
+
+// 🔧 NEW: Global functions for state reversal operations
+window.handleUnskipPlant = handleUnskipPlant;
 
 /**
  * 处理锁定倍数开关变化
@@ -3790,6 +4142,26 @@ function handleAutoMoveChange() {
     if (annotationTool && typeof annotationTool.setAutoMoveToExpectedPosition === 'function') {
       annotationTool.setAutoMoveToExpectedPosition(isEnabled);
     }
+  }
+}
+
+/**
+ * 🔄 处理实时变更同步开关变化
+ */
+function handleRealTimeChangeChange() {
+  const realTimeChangeCheckbox = document.getElementById('real-time-change-checkbox');
+  
+  if (realTimeChangeCheckbox) {
+    const isEnabled = realTimeChangeCheckbox.checked;
+    console.log(`🔄 实时变更同步: ${isEnabled ? '开启' : '关闭'}`);
+    
+    // 通知RealTimeSyncManager更新设置
+    if (realTimeSyncManager && typeof realTimeSyncManager.setEnabled === 'function') {
+      realTimeSyncManager.setEnabled(isEnabled);
+    }
+    
+    // 立即更新进度信息以反映状态变化
+    updateProgressInfo(`实时变更同步已${isEnabled ? '开启' : '关闭'}`);
   }
 }
 
@@ -4668,6 +5040,44 @@ async function handlePostDeletionUpdates(plantId, deletionScope) {
   // Refresh note badges (since annotations are deleted, notes might be affected)
   if (window.PlantAnnotationTool?.noteUI) {
     await window.PlantAnnotationTool.noteUI.updateAllPlantNoteBadges();
+  }
+}
+
+/**
+ * 🔧 NEW: Update complete plant button state based on current plant selection
+ */
+function updateCompletePlantButtonState() {
+  const completeButton = document.getElementById('complete-plant-btn');
+  if (!completeButton) return;
+  
+  if (appState.currentPlant) {
+    const plant = appState.currentPlant;
+    
+    if (plant.status === 'completed') {
+      // Show as uncomplete button
+      completeButton.textContent = 'Uncomplete Plant';
+      completeButton.className = 'btn btn-warning';
+      completeButton.title = `撤销完成植株 ${plant.id}`;
+      completeButton.disabled = false;
+    } else if (plant.status === 'skipped') {
+      // Disable for skipped plants
+      completeButton.textContent = 'Complete Plant';
+      completeButton.className = 'btn btn-success';
+      completeButton.title = '无法完成已跳过的植株，请先撤销跳过';
+      completeButton.disabled = true;
+    } else {
+      // Show as complete button (pending/in-progress)
+      completeButton.textContent = 'Complete Plant';
+      completeButton.className = 'btn btn-success';
+      completeButton.title = `标记植株 ${plant.id} 为完成`;
+      completeButton.disabled = false;
+    }
+  } else {
+    // No plant selected
+    completeButton.textContent = 'Complete Plant';
+    completeButton.className = 'btn btn-success';
+    completeButton.title = '请先选择植物';
+    completeButton.disabled = true;
   }
 }
 
