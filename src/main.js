@@ -1724,10 +1724,15 @@ async function handleImageSelect(image, isImageSwitch = true) {
             }
           }
 
-          // 移动视角到最高标记点并保持当前缩放
-          setTimeout(() => {
-            annotationTool.moveToHighestKeypoint();
-          }, 100); // 稍微延迟确保渲染完成
+          // 🔧 FIX: 只有在开启自动移动时才移动视角到最高标记点
+          if (annotationTool.state.autoMoveToExpectedPosition) {
+            setTimeout(() => {
+              annotationTool.moveToHighestKeypoint();
+              console.log('[自动移动] 移动视角到最高标记点（auto-move已开启）');
+            }, 100); // 稍微延迟确保渲染完成
+          } else {
+            console.log('[自动移动] 跳过移动到最高标记点（auto-move已关闭）');
+          }
         } else {
           // 如果没有已有标注，清空标注工具
           annotationTool.clearKeypoints();
