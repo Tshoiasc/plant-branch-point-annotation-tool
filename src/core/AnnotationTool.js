@@ -66,6 +66,10 @@ export class AnnotationTool {
       isAutoDirectionMode: false,          // 是否处于自动化方向选择模式
       autoDirectionIndex: 0,               // 当前自动选择的关键点索引
       autoDirectionKeypoints: [],          // 需要自动选择方向的关键点列表
+      // 🔧 NEW: 多方向标注状态
+      isDirectionCountMode: false,         // 是否处于方向数量选择模式
+      currentDirectionCount: 1,            // 当前方向数量
+      directionsSet: 0,                    // 已设置的方向数量
       // 新增：自动切换到预期位置
       autoMoveToExpectedPosition: false,   // 是否自动切换到预期位置
       // 新增：自定义区域拖拽状态
@@ -286,6 +290,9 @@ export class AnnotationTool {
     try {
       console.log('Loading image:', imageData.name);
       
+      // 🔧 NEW: 图像切换时中断所有方向相关模式
+      this.interruptAllDirectionModes('image_switch');
+      
       this.currentImage = imageData;
       this.imageLoaded = false;
       
@@ -424,6 +431,9 @@ export class AnnotationTool {
    */
   clearImage() {
     console.log('清空图像和重置视图');
+    
+    // 🔧 NEW: 植物切换时中断所有方向相关模式
+    this.interruptAllDirectionModes('plant_switch');
     
     // 清空图像相关状态
     this.currentImage = null;
@@ -584,8 +594,13 @@ export class AnnotationTool {
     
     this.renderSingleKeypoint(screenPos.x, screenPos.y, fillColor, displayOrder, keypoint.direction, displayStrategy, keypoint);
 
-    // 绘制方向箭头（支持所有类型的方向）
-    this.renderDirectionIndicator(screenPos.x, screenPos.y, keypoint.direction, keypoint);
+    // 🔧 NEW: 绘制多方向箭头（如果有多个方向）
+    if (keypoint.directions && keypoint.directions.length > 1) {
+      this.renderMultipleDirections(keypoint);
+    } else {
+      // 绘制单一方向箭头（支持所有类型的方向）
+      this.renderDirectionIndicator(screenPos.x, screenPos.y, keypoint.direction, keypoint);
+    }
   }
   
   /**
@@ -1167,6 +1182,8 @@ export class AnnotationTool {
         // 右键取消方向选择
         this.cancelDirectionSelection(true); // 强制退出
       }
+    } else if (event.button === 1) { // 🔧 NEW: 中键 - 方向数量选择
+      this.handleMiddleMouseButton(mousePos);
     }
   }
 
@@ -1436,13 +1453,15 @@ export class AnnotationTool {
 
     const imagePos = this.screenToImage(mousePos.x, mousePos.y);
 
-    // 创建无方向标注点
+    // 🔧 NEW: 创建支持多方向的标注点
     const keypoint = {
       id: Date.now().toString(),
       x: imagePos.x,
       y: imagePos.y,
-      direction: null, // 无方向
+      direction: null, // 保持向后兼容
       directionType: null,
+      directions: [], // 🔧 NEW: 支持多方向的数组
+      maxDirections: 1, // 🔧 NEW: 最大方向数，默认为1
       order: this.findNextAvailableOrder(),
       annotationType: 'regular' // 🔧 FIX: Add missing annotationType to fix numbering bug
     };
@@ -1451,6 +1470,9 @@ export class AnnotationTool {
     this.saveState();
     this.autoSaveCurrentImage();
     this.render();
+
+    // 🔄 NEW: 实时同步 - 新标注点创建
+    this.triggerRealTimeSync('ADD_KEYPOINT', keypoint);
 
     // 同步分支点预览
     this.syncBranchPointPreview();
@@ -1471,6 +1493,9 @@ export class AnnotationTool {
       currentDirection: keypoint.direction,
       directionType: keypoint.directionType
     });
+
+    // 🔧 BUG FIX: 确保标注点具有多方向支持
+    this.ensureMultiDirectionSupport(keypoint);
 
     this.state.selectedKeypoint = keypoint;
     this.state.isDirectionSelectionMode = true;
@@ -1546,37 +1571,61 @@ export class AnnotationTool {
       keypointBefore: {...this.state.selectedKeypoint}
     });
 
-    // 更新关键点方向
-    const oldDirection = this.state.selectedKeypoint.direction;
-    this.state.selectedKeypoint.direction = normalizedAngle;
-    this.state.selectedKeypoint.directionType = 'angle'; // 标记为角度类型
-
-    console.log('[调试] 方向更新', {
-      keypointId: this.state.selectedKeypoint.id,
-      order: this.state.selectedKeypoint.order,
-      oldDirection,
-      newDirection: normalizedAngle,
-      keypointAfter: {...this.state.selectedKeypoint}
-    });
-
-    this.saveState();
-    this.autoSaveCurrentImage();
-    
-    // 🔧 FIX: 同步分支点预览 - 方向更新后立即更新预览
-    this.syncBranchPointPreview();
-
-    console.log(`升级标注点 #${this.state.selectedKeypoint.order} 方向为 ${normalizedAngle.toFixed(1)}°`);
-
-    // 如果是自动化模式，立即切换到下一个标注点
-    if (this.state.isAutoDirectionMode) {
-      console.log('[调试] 自动模式，立即切换到下一个标注点');
-      this.selectNextAutoDirectionKeypoint();
+    // 🔧 NEW: 支持多方向设置
+    if (this.state.selectedKeypoint.maxDirections > 1) {
+      // 多方向模式
+      const direction = { angle: normalizedAngle, type: 'angle' };
+      
+      if (this.addDirectionToKeypoint(this.state.selectedKeypoint, direction)) {
+        // 🔧 FIX: Only increment counter after successful addition
+        this.state.directionsSet++;
+        
+        console.log(`[多方向] 设置方向 ${this.state.directionsSet}/${this.state.selectedKeypoint.maxDirections}: ${normalizedAngle.toFixed(1)}°`);
+        
+        // 更新进度显示
+        this.showMultiDirectionProgress();
+        
+        // 🔄 NEW: 实时同步 - 多方向编辑
+        this.triggerRealTimeSync('EDIT_DIRECTION', this.state.selectedKeypoint);
+        
+        // 🔧 FIX: Check actual directions count, not counter
+        if (this.state.selectedKeypoint.directions.length >= this.state.selectedKeypoint.maxDirections) {
+          console.log('[多方向] 所有方向设置完成');
+          this.finishMultiDirectionSetting();
+        }
+      }
     } else {
-      console.log('[调试] 非自动模式，取消方向选择');
-      this.cancelDirectionSelection(true); // 强制退出
+      // 单方向模式（原有逻辑）
+      // 更新关键点方向
+      const oldDirection = this.state.selectedKeypoint.direction;
+      this.state.selectedKeypoint.direction = normalizedAngle;
+      this.state.selectedKeypoint.directionType = 'angle'; // 标记为角度类型
+      
+      // 同时更新directions数组以保持一致性
+      this.state.selectedKeypoint.directions = [{ angle: normalizedAngle, type: 'angle' }];
 
-      // 自动切换到预期位置（仅在非自动模式下，自动模式有自己的切换逻辑）
-      this.moveToNextExpectedPosition();
+      console.log('[调试] 方向更新', {
+        keypointId: this.state.selectedKeypoint.id,
+        order: this.state.selectedKeypoint.order,
+        oldDirection,
+        newDirection: normalizedAngle,
+        keypointAfter: {...this.state.selectedKeypoint}
+      });
+      
+      // 🔄 NEW: 实时同步 - 单方向编辑
+      this.triggerRealTimeSync('EDIT_DIRECTION', this.state.selectedKeypoint);
+      
+      // 如果是自动化模式，立即切换到下一个标注点
+      if (this.state.isAutoDirectionMode) {
+        console.log('[调试] 自动模式，立即切换到下一个标注点');
+        this.selectNextAutoDirectionKeypoint();
+      } else {
+        console.log('[调试] 非自动模式，取消方向选择');
+        this.cancelDirectionSelection(true); // 强制退出
+
+        // 自动切换到预期位置（仅在非自动模式下，自动模式有自己的切换逻辑）
+        this.moveToNextExpectedPosition();
+      }
     }
   }
 
@@ -1988,6 +2037,12 @@ export class AnnotationTool {
    */
   handleWheel(event) {
     event.preventDefault();
+    
+    // 🔧 NEW: 如果处于方向数量模式，用滚轮调整方向数量
+    if (this.state.isDirectionCountMode) {
+      this.handleScrollWheel(event);
+      return;
+    }
     
     const mousePos = this.getMousePos(event);
     const delta = -event.deltaY;
@@ -2535,8 +2590,13 @@ export class AnnotationTool {
     if (data.keypoints) {
       this.keypoints = data.keypoints.map(kp => ({...kp})); // 包含所有标注：常规 + 自定义
 
-      // 为没有序号的旧数据添加序号（兼容性处理）
-      this.ensureKeypointOrders();
+      // 🔧 DISABLED: 为没有序号的旧数据添加序号（兼容性处理）
+      // IMPORTANT: This automatic renumbering was causing order inconsistencies
+      // across frames in real-time sync. Annotations should maintain their
+      // original order numbers to ensure consistent synchronization.
+      // this.ensureKeypointOrders();
+      
+      console.log(`🔄 Loaded ${this.keypoints.length} keypoints (auto-renumbering disabled)`);
     }
 
     if (data.viewState) {
@@ -3023,7 +3083,7 @@ export class AnnotationTool {
 
   /**
    * 🔄 触发实时同步操作
-   * @param {string} operationType - 操作类型 ('ADD_KEYPOINT', 'MOVE_KEYPOINT')
+   * @param {string} operationType - 操作类型 ('ADD_KEYPOINT', 'MOVE_KEYPOINT', 'DELETE_KEYPOINT', 'EDIT_DIRECTION')
    * @param {object} keypoint - 相关的关键点数据
    * @param {object} previousPosition - 之前的位置（仅移动操作需要）
    */
@@ -3155,6 +3215,14 @@ export class AnnotationTool {
             
           case 'DELETE_KEYPOINT':
             realTimeSyncManager.triggerKeypointDeleteSync(
+              keypoint,
+              appState.currentImage,
+              appState.currentPlant
+            );
+            break;
+            
+          case 'EDIT_DIRECTION':
+            realTimeSyncManager.triggerDirectionEditSync(
               keypoint,
               appState.currentImage,
               appState.currentPlant
@@ -3971,6 +4039,9 @@ export class AnnotationTool {
       return;
     }
     
+    // 🔧 NEW: 进入自定义标注模式时中断所有方向相关模式
+    this.interruptAllDirectionModes('custom_annotation_mode');
+    
     try {
       const appState = window.PlantAnnotationTool?.appState;
       const currentImageId = appState?.currentImage?.id;
@@ -4129,5 +4200,497 @@ export class AnnotationTool {
    */
   getCustomAnnotationRenderer() {
     return this.customAnnotationRenderer;
+  }
+
+  // 🔧 NEW: Multi-Direction Annotation Methods
+  
+  /**
+   * 处理中键点击 - 进入/退出方向数量选择模式
+   */
+  handleMiddleMouseButton(mousePos) {
+    // 只有在选中了标注点时才允许进入方向数量模式
+    if (!this.state.selectedKeypoint) {
+      console.log('[多方向] 未选中标注点，忽略中键点击');
+      return;
+    }
+
+    if (this.state.isDirectionCountMode) {
+      // 退出方向数量模式并应用选择的方向数量
+      this.exitDirectionCountMode();
+    } else {
+      // 进入方向数量模式
+      this.enterDirectionCountMode();
+    }
+  }
+
+  /**
+   * 进入方向数量选择模式
+   */
+  enterDirectionCountMode() {
+    console.log('[多方向] 进入方向数量选择模式');
+    
+    this.state.isDirectionCountMode = true;
+    this.state.currentDirectionCount = this.state.selectedKeypoint.maxDirections || 1;
+    
+    // 显示提示信息
+    this.showDirectionCountPrompt('使用滚轮调整方向数量，再次按中键确认');
+    
+    // 改变光标样式
+    this.canvas.style.cursor = 'help';
+  }
+
+  /**
+   * 退出方向数量选择模式
+   */
+  exitDirectionCountMode() {
+    console.log('[多方向] 退出方向数量选择模式，应用方向数量:', this.state.currentDirectionCount);
+    
+    // 应用选择的方向数量到当前标注点
+    if (this.state.selectedKeypoint) {
+      // 🔧 BUG FIX: 确保标注点具有多方向支持
+      this.ensureMultiDirectionSupport(this.state.selectedKeypoint);
+      
+      this.state.selectedKeypoint.maxDirections = this.state.currentDirectionCount;
+      
+      // 如果新的方向数量小于已有方向数量，需要截断
+      if (this.state.selectedKeypoint.directions.length > this.state.currentDirectionCount) {
+        this.state.selectedKeypoint.directions = this.state.selectedKeypoint.directions.slice(0, this.state.currentDirectionCount);
+        console.log('[多方向] 截断directions数组到', this.state.currentDirectionCount, '个');
+      }
+    }
+    
+    this.state.isDirectionCountMode = false;
+    this.hideDirectionCountPrompt();
+    
+    // 恢复光标样式
+    this.canvas.style.cursor = 'crosshair';
+    
+    // 开始设置方向
+    this.startMultiDirectionSetting();
+  }
+
+  /**
+   * 处理滚轮调整方向数量
+   */
+  handleScrollWheel(event) {
+    if (!this.state.isDirectionCountMode) {
+      return;
+    }
+
+    const delta = -event.deltaY;
+    const direction = delta > 0 ? 1 : -1;
+    
+    // 调整方向数量（限制在1-8之间）
+    const newCount = Math.max(1, Math.min(8, this.state.currentDirectionCount + direction));
+    
+    if (newCount !== this.state.currentDirectionCount) {
+      this.state.currentDirectionCount = newCount;
+      this.updateDirectionCountDisplay();
+      console.log('[多方向] 方向数量调整为:', newCount);
+    }
+  }
+
+  /**
+   * 显示方向数量提示
+   */
+  showDirectionCountPrompt(message) {
+    // 创建或更新提示框
+    let prompt = document.getElementById('direction-count-prompt');
+    if (!prompt) {
+      prompt = document.createElement('div');
+      prompt.id = 'direction-count-prompt';
+      prompt.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 15px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        z-index: 10000;
+        pointer-events: none;
+        font-family: Arial, sans-serif;
+      `;
+      document.body.appendChild(prompt);
+    }
+    
+    prompt.innerHTML = `
+      <div style="margin-bottom: 8px;">${message}</div>
+      <div style="font-size: 18px; font-weight: bold; text-align: center;">
+        方向数量: ${this.state.currentDirectionCount}
+      </div>
+    `;
+  }
+
+  /**
+   * 隐藏方向数量提示
+   */
+  hideDirectionCountPrompt() {
+    const prompt = document.getElementById('direction-count-prompt');
+    if (prompt) {
+      prompt.remove();
+    }
+  }
+
+  /**
+   * 更新方向数量显示
+   */
+  updateDirectionCountDisplay() {
+    const prompt = document.getElementById('direction-count-prompt');
+    if (prompt) {
+      prompt.innerHTML = `
+        <div style="margin-bottom: 8px;">使用滚轮调整方向数量，再次按中键确认</div>
+        <div style="font-size: 18px; font-weight: bold; text-align: center;">
+          方向数量: ${this.state.currentDirectionCount}
+        </div>
+      `;
+    }
+  }
+
+  /**
+   * 开始多方向设置
+   */
+  startMultiDirectionSetting() {
+    if (!this.state.selectedKeypoint) {
+      return;
+    }
+
+    // 🔧 FIX: Initialize counter based on existing directions
+    this.state.directionsSet = this.state.selectedKeypoint.directions.length;
+    this.state.isDirectionSelectionMode = true;
+    
+    // 显示进度提示
+    this.showMultiDirectionProgress();
+    
+    console.log(`[多方向] 开始设置 ${this.state.selectedKeypoint.maxDirections} 个方向 (已有 ${this.state.directionsSet} 个)`);
+  }
+
+  /**
+   * 显示多方向设置进度
+   */
+  showMultiDirectionProgress() {
+    const keypoint = this.state.selectedKeypoint;
+    if (!keypoint) return;
+    
+    // 🔧 FIX: Use actual directions count for accuracy
+    const actualDirections = keypoint.directions.length;
+    const progress = `${actualDirections}/${keypoint.maxDirections}`;
+    
+    let message;
+    if (actualDirections >= keypoint.maxDirections) {
+      message = `所有方向已设置完成 ${progress}`;
+    } else {
+      message = `设置方向 ${progress} - 点击设置第 ${actualDirections + 1} 个方向`;
+    }
+    
+    // 更新或创建进度提示
+    let progressPrompt = document.getElementById('multi-direction-progress');
+    if (!progressPrompt) {
+      progressPrompt = document.createElement('div');
+      progressPrompt.id = 'multi-direction-progress';
+      progressPrompt.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: rgba(16, 185, 129, 0.9);
+        color: white;
+        padding: 10px 15px;
+        border-radius: 6px;
+        font-size: 13px;
+        z-index: 10000;
+        pointer-events: none;
+        font-family: Arial, sans-serif;
+      `;
+      document.body.appendChild(progressPrompt);
+    }
+    
+    progressPrompt.textContent = message;
+    
+    // 🔧 FIX: Auto-hide progress when all directions are set
+    if (actualDirections >= keypoint.maxDirections) {
+      setTimeout(() => {
+        this.hideMultiDirectionProgress();
+      }, 2000); // Hide after 2 seconds
+    }
+  }
+
+  /**
+   * 隐藏多方向设置进度
+   */
+  hideMultiDirectionProgress() {
+    const progressPrompt = document.getElementById('multi-direction-progress');
+    if (progressPrompt) {
+      progressPrompt.remove();
+    }
+  }
+
+  /**
+   * 添加方向到标注点
+   */
+  addDirectionToKeypoint(keypoint, direction) {
+    // 🔧 BUG FIX: 确保标注点具有多方向支持
+    this.ensureMultiDirectionSupport(keypoint);
+    
+    if (keypoint.directions.length >= keypoint.maxDirections) {
+      console.warn('[多方向] 已达到最大方向数量:', keypoint.maxDirections);
+      return false;
+    }
+    
+    keypoint.directions.push(direction);
+    console.log('[多方向] 添加方向成功:', direction, '到keypoint #' + keypoint.order);
+    return true;
+  }
+
+  /**
+   * 从标注点移除方向
+   */
+  removeDirectionFromKeypoint(keypoint, index) {
+    // 🔧 BUG FIX: 确保标注点具有多方向支持
+    this.ensureMultiDirectionSupport(keypoint);
+    
+    if (index < 0 || index >= keypoint.directions.length) {
+      console.warn('[多方向] 无效的方向索引:', index);
+      return false;
+    }
+    
+    const removedDirection = keypoint.directions[index];
+    keypoint.directions.splice(index, 1);
+    console.log('[多方向] 移除方向成功:', removedDirection, '从keypoint #' + keypoint.order);
+    return true;
+  }
+
+  /**
+   * 完成多方向设置
+   */
+  finishMultiDirectionSetting() {
+    console.log('[多方向] 完成多方向设置');
+    
+    // 清理UI提示
+    this.hideMultiDirectionProgress();
+    
+    // 🔧 FIX: Ensure state consistency before cleanup
+    if (this.state.selectedKeypoint) {
+      // Sync counter with actual directions
+      this.state.directionsSet = this.state.selectedKeypoint.directions.length;
+      
+      // 🔧 FIX: Verify completion state
+      const isComplete = this.state.selectedKeypoint.directions.length >= this.state.selectedKeypoint.maxDirections;
+      console.log(`[多方向] 设置状态: ${this.state.selectedKeypoint.directions.length}/${this.state.selectedKeypoint.maxDirections} (${isComplete ? '完成' : '未完成'})`);
+    }
+    
+    // 重置状态
+    this.state.isDirectionSelectionMode = false;
+    this.state.directionsSet = 0;
+    this.state.selectedKeypoint = null;
+    
+    // 恢复光标样式
+    this.canvas.style.cursor = 'crosshair';
+    
+    // 保存状态
+    this.saveState();
+    this.autoSaveCurrentImage();
+    
+    // 同步分支点预览
+    this.syncBranchPointPreview();
+    
+    // 自动切换到预期位置
+    this.moveToNextExpectedPosition();
+    
+    console.log('[多方向] 多方向设置完成');
+  }
+
+  /**
+   * 中断方向数量模式
+   */
+  interruptDirectionCountMode(reason) {
+    if (this.state.isDirectionCountMode) {
+      console.log('[多方向] 方向数量模式被中断:', reason);
+      
+      this.state.isDirectionCountMode = false;
+      this.state.currentDirectionCount = 1;
+      this.state.selectedKeypoint = null;
+      
+      this.hideDirectionCountPrompt();
+      this.hideMultiDirectionProgress();
+      
+      // 恢复光标样式
+      this.canvas.style.cursor = 'crosshair';
+    }
+  }
+
+  /**
+   * 中断多方向设置模式
+   */
+  interruptMultiDirectionSetting(reason) {
+    if (this.state.isDirectionSelectionMode && this.state.selectedKeypoint && this.state.selectedKeypoint.maxDirections > 1) {
+      console.log('[多方向] 多方向设置被中断:', reason);
+      
+      // 🔧 FIX: Ensure progress display is properly cleaned up
+      this.hideMultiDirectionProgress();
+      
+      // 重置状态
+      this.state.isDirectionSelectionMode = false;
+      this.state.directionsSet = 0;
+      this.state.selectedKeypoint = null;
+      
+      // 恢复光标样式
+      this.canvas.style.cursor = 'crosshair';
+      
+      // 重新渲染以清除任何视觉提示
+      this.render();
+    }
+  }
+
+  /**
+   * 中断所有方向相关模式
+   */
+  interruptAllDirectionModes(reason) {
+    console.log('[多方向] 中断所有方向模式:', reason);
+    
+    // 中断方向数量模式
+    this.interruptDirectionCountMode(reason);
+    
+    // 中断多方向设置模式
+    this.interruptMultiDirectionSetting(reason);
+    
+    // 中断常规方向选择模式
+    if (this.state.isDirectionSelectionMode) {
+      this.cancelDirectionSelection(true);
+    }
+    
+    // 中断自动化方向模式
+    if (this.state.isAutoDirectionMode) {
+      this.exitAutoDirectionMode();
+    }
+  }
+
+  /**
+   * 检查标注点是否可以有多个方向
+   */
+  canHaveMultipleDirections(keypoint) {
+    return keypoint && keypoint.annotationType === 'regular';
+  }
+
+  /**
+   * 🔧 BUG FIX: 确保标注点具有多方向支持的必要属性
+   */
+  ensureMultiDirectionSupport(keypoint) {
+    if (!keypoint) return;
+    
+    // 确保directions数组存在
+    if (!keypoint.directions) {
+      keypoint.directions = [];
+      
+      // 如果有旧的单方向数据，迁移到新格式
+      if (keypoint.direction !== null && keypoint.direction !== undefined) {
+        if (typeof keypoint.direction === 'number') {
+          keypoint.directions.push({ angle: keypoint.direction, type: 'angle' });
+        } else if (keypoint.direction === 'left') {
+          keypoint.directions.push({ angle: 180, type: 'angle' });
+        } else if (keypoint.direction === 'right') {
+          keypoint.directions.push({ angle: 0, type: 'angle' });
+        }
+        console.log('[多方向] 迁移单方向数据到新格式:', keypoint.direction, '→', keypoint.directions);
+      }
+    }
+    
+    // 确保maxDirections属性存在
+    if (!keypoint.maxDirections) {
+      keypoint.maxDirections = Math.max(1, keypoint.directions.length);
+      console.log('[多方向] 初始化maxDirections为', keypoint.maxDirections, 'for keypoint #' + keypoint.order);
+    }
+    
+    // 确保annotationType存在
+    if (!keypoint.annotationType) {
+      keypoint.annotationType = 'regular';
+    }
+  }
+
+  /**
+   * 渲染多个方向箭头
+   */
+  renderMultipleDirections(keypoint) {
+    // 🔧 BUG FIX: 确保标注点具有多方向支持
+    this.ensureMultiDirectionSupport(keypoint);
+    
+    // 如果没有方向数据，不渲染
+    if (keypoint.directions.length === 0) {
+      return;
+    }
+
+    const screenPos = this.imageToScreen(keypoint.x, keypoint.y);
+    
+    keypoint.directions.forEach((direction, index) => {
+      const angleDegrees = direction.angle;
+      const directionText = `${(index + 1)}/${keypoint.directions.length}`;
+      
+      // 渲染方向箭头，使用不同的颜色或样式来区分
+      this.renderDirectionArrow(screenPos.x, screenPos.y, angleDegrees, directionText, keypoint);
+    });
+  }
+
+  /**
+   * 渲染方向箭头（改进版 - 支持多方向显示）
+   */
+  renderDirectionArrow(x, y, angleDegrees, directionText, keypoint) {
+    const angleRadians = angleDegrees * Math.PI / 180;
+    const arrowLength = this.options.directionArrowLength;
+
+    // 计算箭头终点
+    const endX = x + Math.cos(angleRadians) * arrowLength;
+    const endY = y + Math.sin(angleRadians) * arrowLength;
+
+    // 绘制虚线主线
+    this.ctx.strokeStyle = '#10b981'; // 绿色
+    this.ctx.lineWidth = 3;
+    this.ctx.setLineDash([8, 4]); // 虚线样式
+    this.ctx.lineCap = 'round';
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(x, y);
+    this.ctx.lineTo(endX, endY);
+    this.ctx.stroke();
+
+    // 重置虚线样式
+    this.ctx.setLineDash([]);
+
+    // 绘制箭头头部（实线）
+    const headAngle1 = angleRadians + Math.PI * 0.8;
+    const headAngle2 = angleRadians - Math.PI * 0.8;
+    const headLength = 15;
+
+    this.ctx.strokeStyle = '#10b981';
+    this.ctx.lineWidth = 3;
+    this.ctx.lineCap = 'round';
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(endX, endY);
+    this.ctx.lineTo(endX + Math.cos(headAngle1) * headLength, endY + Math.sin(headAngle1) * headLength);
+    this.ctx.moveTo(endX, endY);
+    this.ctx.lineTo(endX + Math.cos(headAngle2) * headLength, endY + Math.sin(headAngle2) * headLength);
+    this.ctx.stroke();
+
+    // 绘制方向文本（带背景）
+    const textOffset = 20;
+    const textX = endX + Math.cos(angleRadians) * textOffset;
+    const textY = endY + Math.sin(angleRadians) * textOffset;
+
+    // 测量文本尺寸
+    this.ctx.font = 'bold 11px Arial';
+    const textMetrics = this.ctx.measureText(directionText);
+    const textWidth = textMetrics.width;
+    const textHeight = 11;
+
+    // 绘制文本背景
+    this.ctx.fillStyle = 'rgba(16, 185, 129, 0.9)';
+    this.ctx.fillRect(textX - textWidth/2 - 3, textY - textHeight/2 - 2, textWidth + 6, textHeight + 4);
+
+    // 绘制文本
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText(directionText, textX, textY);
   }
 }

@@ -899,8 +899,13 @@ export class PlantDataManager {
 
       const annotations = annotationData.annotations;
 
-      // 为传统数据添加序号（兼容性处理）
-      this.ensureAnnotationOrders(annotations);
+      // 🔧 DISABLED: 为传统数据添加序号（兼容性处理）
+      // IMPORTANT: This automatic renumbering was causing order inconsistencies
+      // across frames in real-time sync. Annotations should maintain their
+      // original order numbers to ensure consistent synchronization.
+      // this.ensureAnnotationOrders(annotations);
+      
+      console.log(`🔄 Loaded ${annotations.length} annotations for image ${imageId} (auto-renumbering disabled)`);
 
       return annotations;
     } catch (error) {

@@ -23,6 +23,7 @@ class RealTimeSyncManager {
       ADD_KEYPOINT: 'ADD_KEYPOINT',
       MOVE_KEYPOINT: 'MOVE_KEYPOINT',
       DELETE_KEYPOINT: 'DELETE_KEYPOINT',
+      EDIT_DIRECTION: 'EDIT_DIRECTION', // 🔧 NEW: Direction-specific operation
       CUSTOM_ANNOTATION_CREATE: 'CUSTOM_ANNOTATION_CREATE',
       CUSTOM_ANNOTATION_UPDATE: 'CUSTOM_ANNOTATION_UPDATE',
       CUSTOM_ANNOTATION_DELETE: 'CUSTOM_ANNOTATION_DELETE',
@@ -340,21 +341,34 @@ class RealTimeSyncManager {
     const existingData = await this.annotationStorageManager.getImageAnnotation(targetImage.id);
     const existingAnnotations = existingData ? existingData.annotations : [];
     
-    // Check if keypoint with same ID already exists
-    const existingKeypoint = existingAnnotations.find(ann => ann.id === keypoint.id);
+    // 🔧 FIX: Use order-based matching for consistent sync behavior
+    // This is crucial for real-time sync: sync by order + type, not by ID
+    const existingKeypoint = existingAnnotations.find(ann => {
+      const orderMatch = ann.order === keypoint.order;
+      const typeMatch = ann.annotationType === keypoint.annotationType;
+      
+      // For custom annotations, customTypeId must also match
+      const customTypeMatch = keypoint.annotationType === 'custom' 
+        ? ann.customTypeId === keypoint.customTypeId
+        : true;
+      
+      return orderMatch && typeMatch && customTypeMatch;
+    });
     
     if (existingKeypoint) {
-      // Update existing keypoint position
+      // Update existing keypoint position and all properties
       existingKeypoint.x = keypoint.x;
       existingKeypoint.y = keypoint.y;
       existingKeypoint.direction = keypoint.direction;
       existingKeypoint.directionType = keypoint.directionType;
+      existingKeypoint.directions = keypoint.directions; // 🔧 NEW: Support multi-direction
+      existingKeypoint.maxDirections = keypoint.maxDirections; // 🔧 NEW: Support multi-direction
       existingKeypoint.timestamp = new Date().toISOString();
       
-      // 🔧 Enhanced Debug: Log custom annotation details
+      // 🔧 Enhanced Debug: Log annotation details
       const typeDesc = keypoint.annotationType === 'custom' ? 
         `custom(${keypoint.customTypeId})` : 'regular';
-      console.log(`🔄 Updated existing ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} in image ${targetImage.id}`);
+      console.log(`🔄 Updated existing ${typeDesc} keypoint order ${keypoint.order} in image ${targetImage.id}`);
     } else {
       // Add new keypoint
       const newKeypoint = {
@@ -363,10 +377,10 @@ class RealTimeSyncManager {
       };
       existingAnnotations.push(newKeypoint);
       
-      // 🔧 Enhanced Debug: Log custom annotation details
+      // 🔧 Enhanced Debug: Log annotation details
       const typeDesc = keypoint.annotationType === 'custom' ? 
         `custom(${keypoint.customTypeId})` : 'regular';
-      console.log(`🔄 Added new ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} to image ${targetImage.id}`);
+      console.log(`🔄 Added new ${typeDesc} keypoint order ${keypoint.order} to image ${targetImage.id}`);
     }
 
     // Prepare complete annotation data object
@@ -391,33 +405,46 @@ class RealTimeSyncManager {
     const existingData = await this.annotationStorageManager.getImageAnnotation(targetImage.id);
     const existingAnnotations = existingData ? existingData.annotations : [];
     
-    // Find existing keypoint
-    const existingKeypoint = existingAnnotations.find(ann => ann.id === keypoint.id);
+    // 🔧 FIX: Use order-based matching for consistent sync behavior
+    // This is crucial for real-time sync: sync by order + type, not by ID
+    const existingKeypoint = existingAnnotations.find(ann => {
+      const orderMatch = ann.order === keypoint.order;
+      const typeMatch = ann.annotationType === keypoint.annotationType;
+      
+      // For custom annotations, customTypeId must also match
+      const customTypeMatch = keypoint.annotationType === 'custom' 
+        ? ann.customTypeId === keypoint.customTypeId
+        : true;
+      
+      return orderMatch && typeMatch && customTypeMatch;
+    });
     
     if (existingKeypoint) {
-      // Update position
+      // Update position and all properties
       existingKeypoint.x = keypoint.x;
       existingKeypoint.y = keypoint.y;
       existingKeypoint.direction = keypoint.direction;
       existingKeypoint.directionType = keypoint.directionType;
+      existingKeypoint.directions = keypoint.directions; // 🔧 NEW: Support multi-direction
+      existingKeypoint.maxDirections = keypoint.maxDirections; // 🔧 NEW: Support multi-direction
       existingKeypoint.timestamp = new Date().toISOString();
       
-      // 🔧 Enhanced Debug: Log custom annotation details
+      // 🔧 Enhanced Debug: Log annotation details
       const typeDesc = keypoint.annotationType === 'custom' ? 
         `custom(${keypoint.customTypeId})` : 'regular';
-      console.log(`🔄 Moved ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} in image ${targetImage.id}`);
+      console.log(`🔄 Moved ${typeDesc} keypoint order ${keypoint.order} in image ${targetImage.id}`);
     } else {
-      // Add new keypoint if it doesn't exist
+      // Add new keypoint if it doesn't exist (order-based sync)
       const newKeypoint = {
         ...keypoint,
         timestamp: new Date().toISOString()
       };
       existingAnnotations.push(newKeypoint);
       
-      // 🔧 Enhanced Debug: Log custom annotation details
+      // 🔧 Enhanced Debug: Log annotation details
       const typeDesc = keypoint.annotationType === 'custom' ? 
         `custom(${keypoint.customTypeId})` : 'regular';
-      console.log(`🔄 Added new ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} to image ${targetImage.id} (move operation)`);
+      console.log(`🔄 Added new ${typeDesc} keypoint order ${keypoint.order} to image ${targetImage.id} (move operation)`);
     }
 
     // Prepare complete annotation data object
@@ -563,6 +590,10 @@ class RealTimeSyncManager {
         // 🔧 FIX: Properly handle keypoint deletion sync
         return await this.syncKeypointDeletion(operation);
       
+      case this.OPERATION_TYPES.EDIT_DIRECTION:
+        // 🔧 NEW: Direction-specific sync operation
+        return await this.syncDirectionEdit(operation);
+      
       case this.OPERATION_TYPES.CUSTOM_ANNOTATION_CREATE:
         return await this.syncCustomAnnotationCreate(syncData);
       
@@ -580,6 +611,123 @@ class RealTimeSyncManager {
     }
   }
 
+  /**
+   * Sync direction edit to future images
+   * @param {object} operation - Direction edit operation
+   * @returns {Promise<object>} Sync result
+   */
+  async syncDirectionEdit(operation) {
+    if (!this.isEnabled) {
+      return { success: true, message: 'Sync disabled', synced: 0 };
+    }
+
+    const { keypoint, currentImage, currentPlant } = operation;
+
+    console.log(`🔄 Starting direction edit sync for keypoint order ${keypoint.order}`);
+    console.log(`🔄 Current image: ${currentImage.id}, Plant: ${currentPlant.id}, View: ${currentPlant.selectedViewAngle}`);
+
+    try {
+      const futureImages = await this.getFutureImages(currentImage, currentPlant);
+      
+      if (futureImages.length === 0) {
+        console.log(`🔄 No future images found for direction edit sync`);
+        return { success: true, message: 'No future images to sync', synced: 0 };
+      }
+
+      console.log(`🔄 Found ${futureImages.length} future images:`, futureImages.map(img => img.id));
+
+      let syncedCount = 0;
+      const errors = [];
+
+      // Process each future image sequentially to avoid conflicts
+      for (const image of futureImages) {
+        try {
+          console.log(`🔄 Syncing direction edit to image ${image.id}...`);
+          await this.editDirectionInImage(keypoint, image);
+          syncedCount++;
+          console.log(`🔄 Successfully synced direction edit to image ${image.id}`);
+        } catch (error) {
+          console.error(`🔄 Error syncing direction edit to image ${image.id}:`, error);
+          errors.push({ imageId: image.id, error: error.message });
+        }
+      }
+
+      const result = {
+        success: errors.length === 0,
+        message: `Synced direction edit to ${syncedCount} future images`,
+        synced: syncedCount,
+        errors: errors.length > 0 ? errors : undefined
+      };
+
+      console.log(`🔄 Direction edit sync completed:`, result);
+      return result;
+
+    } catch (error) {
+      console.error('🔄 Error in direction edit sync:', error);
+      return { success: false, message: error.message, synced: 0 };
+    }
+  }
+
+  /**
+   * Edit direction in a specific image
+   * @param {object} keypoint - Keypoint with updated direction
+   * @param {object} targetImage - Target image
+   * @returns {Promise<void>}
+   */
+  async editDirectionInImage(keypoint, targetImage) {
+    // Get existing annotations for the target image
+    const existingData = await this.annotationStorageManager.getImageAnnotation(targetImage.id);
+    const existingAnnotations = existingData ? existingData.annotations : [];
+    
+    // 🔧 FIX: Use order-based matching for direction edits
+    const existingKeypoint = existingAnnotations.find(ann => {
+      const orderMatch = ann.order === keypoint.order;
+      const typeMatch = ann.annotationType === keypoint.annotationType;
+      
+      // For custom annotations, customTypeId must also match
+      const customTypeMatch = keypoint.annotationType === 'custom' 
+        ? ann.customTypeId === keypoint.customTypeId
+        : true;
+      
+      return orderMatch && typeMatch && customTypeMatch;
+    });
+    
+    if (existingKeypoint) {
+      // Update only direction-related properties
+      existingKeypoint.direction = keypoint.direction;
+      existingKeypoint.directionType = keypoint.directionType;
+      existingKeypoint.directions = keypoint.directions; // 🔧 NEW: Support multi-direction
+      existingKeypoint.maxDirections = keypoint.maxDirections; // 🔧 NEW: Support multi-direction
+      existingKeypoint.timestamp = new Date().toISOString();
+      
+      // 🔧 Enhanced Debug: Log direction edit details
+      const typeDesc = keypoint.annotationType === 'custom' ? 
+        `custom(${keypoint.customTypeId})` : 'regular';
+      console.log(`🔄 Updated direction for ${typeDesc} keypoint order ${keypoint.order} in image ${targetImage.id}`);
+    } else {
+      // Add new keypoint if it doesn't exist (order-based sync)
+      const newKeypoint = {
+        ...keypoint,
+        timestamp: new Date().toISOString()
+      };
+      existingAnnotations.push(newKeypoint);
+      
+      // 🔧 Enhanced Debug: Log annotation details
+      const typeDesc = keypoint.annotationType === 'custom' ? 
+        `custom(${keypoint.customTypeId})` : 'regular';
+      console.log(`🔄 Added new ${typeDesc} keypoint order ${keypoint.order} to image ${targetImage.id} (direction edit operation)`);
+    }
+
+    // Prepare complete annotation data object
+    const annotationData = {
+      imageId: targetImage.id,
+      annotations: existingAnnotations,
+      lastModified: new Date().toISOString()
+    };
+
+    // Save updated annotations
+    await this.annotationStorageManager.saveImageAnnotation(targetImage.id, annotationData);
+  }
   /**
    * Sync custom annotation creation to future images
    * @param {object} syncData - Custom annotation sync data
@@ -966,6 +1114,29 @@ class RealTimeSyncManager {
 
     const operation = {
       type: this.OPERATION_TYPES.DELETE_KEYPOINT,
+      keypoint,
+      currentImage,
+      currentPlant,
+      timestamp: new Date().toISOString()
+    };
+
+    await this.queueSyncOperation(operation);
+  }
+
+  /**
+   * Trigger sync for direction edit
+   * @param {object} keypoint - Keypoint with updated direction
+   * @param {object} currentImage - Current image context
+   * @param {object} currentPlant - Current plant context
+   * @returns {Promise<void>}
+   */
+  async triggerDirectionEditSync(keypoint, currentImage, currentPlant) {
+    if (!this.isEnabled) {
+      return;
+    }
+
+    const operation = {
+      type: this.OPERATION_TYPES.EDIT_DIRECTION,
       keypoint,
       currentImage,
       currentPlant,
