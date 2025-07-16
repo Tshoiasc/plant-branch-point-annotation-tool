@@ -697,10 +697,10 @@ export class BranchPointPreviewManager {
 
     const angleRadians = angleDegrees * Math.PI / 180;
 
-    // 根据是否为目标点调整尺寸
-    const arrowLength = isTarget ? 15 : 10;
-    const headLength = isTarget ? 4 : 3;
-    const lineWidth = isTarget ? 2 : 1;
+    // 🔧 FIX: 增加箭头尺寸以提高可见性
+    const arrowLength = isTarget ? 25 : 18;  // 增加箭头长度 (原来: 15/10)
+    const headLength = isTarget ? 7 : 5;     // 增加箭头头部尺寸 (原来: 4/3)
+    const lineWidth = isTarget ? 3 : 2;      // 增加线条宽度 (原来: 2/1)
 
     // 计算箭头终点
     const endX = x + Math.cos(angleRadians) * arrowLength;

@@ -1561,6 +1561,9 @@ export class AnnotationTool {
 
     this.saveState();
     this.autoSaveCurrentImage();
+    
+    // 🔧 FIX: 同步分支点预览 - 方向更新后立即更新预览
+    this.syncBranchPointPreview();
 
     console.log(`升级标注点 #${this.state.selectedKeypoint.order} 方向为 ${normalizedAngle.toFixed(1)}°`);
 
