@@ -17,6 +17,8 @@ import { NoteUI } from './core/NoteUI.js';
 import { AnnotationManager } from './core/AnnotationManager.js';
 import { BulkLoadingPerformanceMonitor } from './utils/BulkLoadingPerformanceMonitor.js';
 import RealTimeSyncManager from './core/RealTimeSyncManager.js';
+import { CustomAnnotationToolbarController } from './core/CustomAnnotationToolbarController.js';
+import { CustomAnnotationSettingsController } from './core/CustomAnnotationSettingsController.js';
 
 // 🔧 FIX: Global error handling to prevent uncaught promise errors
 window.addEventListener('unhandledrejection', (event) => {
@@ -74,6 +76,8 @@ let annotationManager = null;
 let realTimeSyncManager = null;
 let performanceMonitor = null;
 let currentDataset = null;
+let customAnnotationToolbarController = null;
+let customAnnotationSettingsController = null;
 
 // 应用状态
 const appState = {
@@ -85,6 +89,50 @@ const appState = {
   currentImage: null,
   annotations: new Map()
 };
+
+/**
+ * 初始化自定义标注控制器
+ */
+function initializeCustomAnnotationControllers() {
+  // 防止重复初始化
+  if (customAnnotationSettingsController || customAnnotationToolbarController) {
+    console.log('Custom annotation controllers already initialized, skipping...');
+    return;
+  }
+  
+  if (!annotationTool || !annotationTool.customAnnotationManager) {
+    console.warn('CustomAnnotationManager not ready, retrying...');
+    setTimeout(() => {
+      initializeCustomAnnotationControllers();
+    }, 200);
+    return;
+  }
+  
+  try {
+    // 创建设置控制器 - 传入正确的参数
+    customAnnotationSettingsController = new CustomAnnotationSettingsController(annotationTool.customAnnotationManager);
+    
+    // 创建工具栏控制器，传入正确的参数
+    customAnnotationToolbarController = new CustomAnnotationToolbarController(
+      annotationTool.customAnnotationManager,
+      customAnnotationSettingsController
+    );
+    
+    // 初始化工具栏控制器
+    customAnnotationToolbarController.initialize();
+    
+    // 全局引用
+    window.PlantAnnotationTool.customAnnotationToolbarController = customAnnotationToolbarController;
+    window.PlantAnnotationTool.customAnnotationSettingsController = customAnnotationSettingsController;
+    
+    console.log('自定义标注控制器初始化成功');
+  } catch (error) {
+    console.error('自定义标注控制器初始化失败:', error);
+  }
+}
+
+// 设置回调函数
+window.onCustomAnnotationSystemReady = initializeCustomAnnotationControllers;
 
 /**
  * 应用初始化
@@ -142,6 +190,20 @@ async function initializeApp() {
       window.PlantAnnotationTool.branchPointPreviewManager = branchPointPreviewManager;
     } catch (error) {
       console.warn('BranchPointPreviewManager初始化延迟:', error.message);
+    }
+    
+    updateFullscreenLoading(52, 'Setting up custom annotation system...', 'Initializing custom annotation controllers');
+    
+    // 初始化自定义标注系统 - 需要等待异步加载完成
+    try {
+      // 等待annotation tool的自定义标注系统异步加载完成
+      setTimeout(() => {
+        initializeCustomAnnotationControllers();
+      }, 500); // 给动态导入一些时间来完成
+      
+      console.log('自定义标注系统初始化已启动');
+    } catch (error) {
+      console.warn('自定义标注系统初始化延迟:', error.message);
     }
     
     updateFullscreenLoading(55, 'Setting up note system...', 'Initializing note management functionality');
@@ -1040,6 +1102,9 @@ async function loadImageNoteCount(plantId, imageId) {
   }
 }
 
+// 🔧 FIX: 将加载图像笔记计数函数暴露到全局，供NoteUI调用
+window.loadImageNoteCount = loadImageNoteCount;
+
 /**
  * 获取状态图标
  */
@@ -1649,6 +1714,15 @@ async function handleImageSelect(image, isImageSwitch = true) {
         if (existingAnnotations && existingAnnotations.length > 0) {
           annotationTool.loadAnnotationData({ keypoints: existingAnnotations });
           console.log(`[标注] 加载了 ${existingAnnotations.length} 个已有标注点`);
+          
+          // 🔧 FIX: 同步自定义标注到CustomAnnotationManager内部状态
+          if (annotationTool.customAnnotationManager) {
+            const customAnnotations = existingAnnotations.filter(ann => ann.annotationType === 'custom');
+            if (customAnnotations.length > 0) {
+              console.log(`[自定义标注] 发现 ${customAnnotations.length} 个自定义标注，同步到CustomAnnotationManager`);
+              annotationTool.customAnnotationManager.syncAnnotationsFromKeypoints(image.id, customAnnotations);
+            }
+          }
 
           // 移动视角到最高标记点并保持当前缩放
           setTimeout(() => {

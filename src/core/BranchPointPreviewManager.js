@@ -399,15 +399,35 @@ export class BranchPointPreviewManager {
   }
 
   /**
-   * 获取下一个要标注的编号（最小的缺失编号）
+   * 获取下一个要标注的编号（最小的缺失编号）- 支持自定义标注类型
    */
   getNextOrderToAnnotate() {
     // 从AnnotationTool获取下一个可用编号
     const annotationTool = window.PlantAnnotationTool?.annotationTool;
-    if (annotationTool && typeof annotationTool.findNextAvailableOrder === 'function') {
-      const nextOrder = annotationTool.findNextAvailableOrder();
-      console.log(`[预览] 从AnnotationTool获取下一个编号: ${nextOrder}, 当前标注点数: ${this.currentKeypointCount}`);
-      return nextOrder;
+    if (!annotationTool) {
+      console.warn('[预览] AnnotationTool不可用，使用后备方案');
+      return this.currentKeypointCount + 1;
+    }
+
+    // 🔧 FIX: 检查是否处于自定义标注模式
+    const customAnnotationManager = annotationTool.getCustomAnnotationManager();
+    const isInCustomMode = customAnnotationManager?.isInCustomMode();
+    
+    if (isInCustomMode) {
+      // 自定义标注模式：获取当前自定义类型的下一个编号
+      const currentCustomType = customAnnotationManager.getCurrentCustomType();
+      if (currentCustomType && typeof annotationTool.findNextAvailableOrderForType === 'function') {
+        const nextOrder = annotationTool.findNextAvailableOrderForType(currentCustomType.id);
+        console.log(`[预览] 自定义模式 - 从AnnotationTool获取${currentCustomType.id}类型的下一个编号: ${nextOrder}, 当前标注点数: ${this.currentKeypointCount}`);
+        return nextOrder;
+      }
+    } else {
+      // 常规标注模式：获取常规标注的下一个编号
+      if (typeof annotationTool.findNextAvailableOrder === 'function') {
+        const nextOrder = annotationTool.findNextAvailableOrder();
+        console.log(`[预览] 常规模式 - 从AnnotationTool获取下一个编号: ${nextOrder}, 当前标注点数: ${this.currentKeypointCount}`);
+        return nextOrder;
+      }
     }
 
     // 后备方案：简单计算
@@ -425,12 +445,39 @@ export class BranchPointPreviewManager {
     // 获取下一个要标注的编号
     const nextOrder = this.getNextOrderToAnnotate();
     
-    // 在上一张图像的标注中查找对应编号的标注点
-    const targetAnnotation = annotations.find(annotation => annotation.order === nextOrder);
+    // 🔧 FIX: 根据当前标注模式进行不同的匹配逻辑
+    const annotationTool = window.PlantAnnotationTool?.annotationTool;
+    const customAnnotationManager = annotationTool?.getCustomAnnotationManager();
+    const isInCustomMode = customAnnotationManager?.isInCustomMode();
     
-    // 如果没有对应编号的标注点，显示无预览
+    let targetAnnotation;
+    let previewMessage;
+    
+    if (isInCustomMode) {
+      // 自定义标注模式：匹配编号和自定义类型
+      const currentCustomType = customAnnotationManager.getCurrentCustomType();
+      if (currentCustomType) {
+        targetAnnotation = annotations.find(annotation => 
+          annotation.order === nextOrder && 
+          annotation.annotationType === 'custom' && 
+          annotation.customTypeId === currentCustomType.id
+        );
+        previewMessage = `上一张图像暂无第${nextOrder}个${currentCustomType.name}标注点`;
+      } else {
+        previewMessage = `上一张图像暂无第${nextOrder}个自定义标注点`;
+      }
+    } else {
+      // 常规标注模式：只匹配编号和常规类型
+      targetAnnotation = annotations.find(annotation => 
+        annotation.order === nextOrder && 
+        (annotation.annotationType === 'regular' || !annotation.annotationType)
+      );
+      previewMessage = `上一张图像暂无第${nextOrder}个分支点`;
+    }
+    
+    // 如果没有对应的标注点，显示无预览
     if (!targetAnnotation) {
-      this.showNoPreview(`上一张图像暂无第${nextOrder}个分支点`);
+      this.showNoPreview(previewMessage);
       return;
     }
     

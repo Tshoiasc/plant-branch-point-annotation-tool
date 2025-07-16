@@ -1254,44 +1254,78 @@ export class PlantDataManager {
   }
 
   /**
-   * 确保标注数据都有序号（兼容性处理）
+   * 🔧 FIXED: 确保标注数据都有序号（支持类型特定编号系统）
+   * 为缺少序号的标注点分配序号，但保持类型特定的编号系统
    */
   ensureAnnotationOrders(annotations) {
     if (!annotations || annotations.length === 0) {
       return;
     }
     
-    let hasOrderIssues = false;
+    // 🔧 FIX: 按类型分组标注点
+    const annotationsByType = {};
     
-    // 检查是否有标注点没有序号
-    for (let i = 0; i < annotations.length; i++) {
-      if (typeof annotations[i].order !== 'number' || annotations[i].order <= 0) {
-        hasOrderIssues = true;
-        break;
+    // 分组：regular, 和各种自定义类型
+    annotations.forEach(annotation => {
+      // 🐛 BUGFIX: Ensure all annotations have annotationType field set
+      if (!annotation.annotationType) {
+        // 🔧 FIX: Smart detection - check if this is actually a custom annotation
+        if (annotation.customTypeId) {
+          annotation.annotationType = 'custom'; // Preserve custom type
+        } else {
+          annotation.annotationType = 'regular'; // Default to regular for missing field
+        }
       }
-    }
+      
+      const typeKey = annotation.annotationType === 'custom' 
+        ? `custom:${annotation.customTypeId || 'unknown'}`
+        : 'regular';
+      
+      if (!annotationsByType[typeKey]) {
+        annotationsByType[typeKey] = [];
+      }
+      annotationsByType[typeKey].push(annotation);
+    });
     
-    // 检查序号是否重复或不连续
-    if (!hasOrderIssues) {
-      const orders = annotations.map(kp => kp.order).sort((a, b) => a - b);
-      for (let i = 0; i < orders.length; i++) {
-        if (orders[i] !== i + 1) {
+    let totalFixed = 0;
+    
+    // 🔧 FIX: 为每个类型独立处理序号
+    Object.entries(annotationsByType).forEach(([typeKey, typeAnnotations]) => {
+      let hasOrderIssues = false;
+      
+      // 检查该类型是否有序号问题
+      for (let i = 0; i < typeAnnotations.length; i++) {
+        if (typeof typeAnnotations[i].order !== 'number' || typeAnnotations[i].order <= 0) {
           hasOrderIssues = true;
           break;
         }
       }
-    }
-    
-    // 如果有问题，重新分配序号
-    if (hasOrderIssues) {
-      console.log(`发现传统标注数据无序号，正在为 ${annotations.length} 个标注点分配序号...`);
       
-      // 按照原有顺序分配序号（保持传统数据的顺序不变）
-      for (let i = 0; i < annotations.length; i++) {
-        annotations[i].order = i + 1;
+      // 检查该类型内部是否有重复序号
+      if (!hasOrderIssues) {
+        const orders = typeAnnotations.map(kp => kp.order);
+        const uniqueOrders = [...new Set(orders)];
+        if (uniqueOrders.length !== orders.length) {
+          hasOrderIssues = true;
+        }
       }
       
-      console.log(`已为传统数据分配序号：1-${annotations.length}`);
+      // 如果该类型有序号问题，重新分配
+      if (hasOrderIssues) {
+        console.log(`发现 ${typeKey} 类型标注序号问题，正在为 ${typeAnnotations.length} 个标注点分配序号...`);
+        
+        // 按照原有顺序为该类型分配序号（从1开始）
+        for (let i = 0; i < typeAnnotations.length; i++) {
+          typeAnnotations[i].order = i + 1;
+        }
+        
+        totalFixed += typeAnnotations.length;
+        console.log(`已为 ${typeKey} 类型分配序号：1-${typeAnnotations.length}`);
+      }
+    });
+    
+    if (totalFixed > 0) {
+      console.log(`序号修复完成：共修复 ${totalFixed} 个标注点，保持类型特定编号系统`);
     }
   }
 } 

@@ -2336,7 +2336,9 @@ export class AnnotationTool {
    */
   findNextAvailableOrder() {
     // 🔧 FIX: 只考虑常规标注的序号，实现独立计数
-    const regularKeypoints = this.keypoints.filter(kp => kp.annotationType === 'regular');
+    // 🐛 BUGFIX: Include fallback for annotations without annotationType field (loaded from storage)
+    const regularKeypoints = this.keypoints.filter(kp => 
+      kp.annotationType === 'regular' || !kp.annotationType);
     
     if (regularKeypoints.length === 0) {
       return 1;

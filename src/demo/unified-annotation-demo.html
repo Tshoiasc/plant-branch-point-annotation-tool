@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统一标注系统演示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .demo-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+        
+        .demo-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        
+        .status {
+            background: #e8f5e8;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #28a745;
+        }
+        
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
+        .demo-results {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        .unified-info {
+            background: #e7f3ff;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #007bff;
+            margin: 20px 0;
+        }
+        
+        .unified-info h4 {
+            margin-top: 0;
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 统一标注系统演示</h1>
+            <p>演示自定义标注与常规标注的统一管理</p>
+        </div>
+        
+        <div class="unified-info">
+            <h4>🔄 统一标注系统特性</h4>
+            <ul>
+                <li>自定义标注与常规标注存储在同一个 <code>keypoints</code> 数组中</li>
+                <li>通过 <code>annotationType</code> 字段区分标注类型（'regular' 或 'custom'）</li>
+                <li>自定义标注包含 <code>customTypeId</code> 字段关联类型定义</li>
+                <li>区域标注包含 <code>width</code> 和 <code>height</code> 字段</li>
+                <li>统一的序号系统、删除、清理和持久化</li>
+            </ul>
+        </div>
+        
+        <div class="demo-section">
+            <h3>📊 系统状态</h3>
+            <div id="system-status" class="status">正在初始化...</div>
+            <div id="keypoints-count" class="demo-results">总标注数: 0</div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>➕ 创建标注</h3>
+            <button onclick="createRegularAnnotation()">创建常规标注</button>
+            <button onclick="createCustomPointAnnotation()">创建自定义点标注</button>
+            <button onclick="createCustomRegionAnnotation()">创建自定义区域标注</button>
+            <div id="create-results" class="demo-results">等待操作...</div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>🗑️ 删除标注</h3>
+            <button onclick="deleteLastAnnotation()">删除最后一个标注</button>
+            <button onclick="clearAllAnnotations()">清除所有标注</button>
+            <div id="delete-results" class="demo-results">等待操作...</div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>📋 标注列表</h3>
+            <button onclick="updateAnnotationList()">刷新列表</button>
+            <div id="annotation-list" class="demo-results">点击刷新查看标注列表...</div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>💾 数据管理</h3>
+            <button onclick="exportData()">导出数据</button>
+            <button onclick="testPersistence()">测试持久化</button>
+            <div id="data-results" class="demo-results">等待操作...</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { AnnotationTool } from '../core/AnnotationTool.js';
+        import { CustomAnnotationManager } from '../core/CustomAnnotationManager.js';
+        
+        // 全局变量
+        let annotationTool;
+        let customAnnotationManager;
+        let customTypes = new Map();
+        
+        // 模拟 DOM 和全局环境
+        function setupMockEnvironment() {
+            // 创建模拟的 canvas 元素
+            const canvas = document.createElement('canvas');
+            canvas.id = 'demo-canvas';
+            canvas.width = 800;
+            canvas.height = 600;
+            canvas.style.display = 'none';
+            document.body.appendChild(canvas);
+            
+            // 模拟全局环境
+            window.PlantAnnotationTool = {
+                appState: {
+                    currentImage: { id: 'demo-image-1', name: 'demo.jpg' },
+                    currentPlant: { id: 'demo-plant-1', name: 'Demo Plant' }
+                }
+            };
+        }
+        
+        // 初始化系统
+        async function initializeSystem() {
+            try {
+                setupMockEnvironment();
+                
+                // 创建自定义标注管理器
+                customAnnotationManager = new CustomAnnotationManager();
+                
+                // 创建标注工具
+                annotationTool = new AnnotationTool('demo-canvas');
+                annotationTool.customAnnotationManager = customAnnotationManager;
+                
+                // 创建测试用的自定义类型
+                const pointType = customAnnotationManager.createCustomType({
+                    id: 'demo-point',
+                    name: '演示点',
+                    type: 'point',
+                    color: '#ff6b6b'
+                });
+                
+                const regionType = customAnnotationManager.createCustomType({
+                    id: 'demo-region',
+                    name: '演示区域',
+                    type: 'region',
+                    color: '#4ecdc4'
+                });
+                
+                customTypes.set('point', pointType);
+                customTypes.set('region', regionType);
+                
+                updateStatus('系统初始化完成 ✅', 'success');
+                updateKeypointsCount();
+                
+            } catch (error) {
+                updateStatus('系统初始化失败: ' + error.message, 'error');
+            }
+        }
+        
+        // 更新状态显示
+        function updateStatus(message, type = 'info') {
+            const statusEl = document.getElementById('system-status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+        
+        // 更新标注计数
+        function updateKeypointsCount() {
+            const count = annotationTool ? annotationTool.keypoints.length : 0;
+            const regularCount = annotationTool ? annotationTool.keypoints.filter(kp => kp.annotationType === 'regular').length : 0;
+            const customCount = annotationTool ? annotationTool.keypoints.filter(kp => kp.annotationType === 'custom').length : 0;
+            
+            document.getElementById('keypoints-count').textContent = 
+                `总标注数: ${count} (常规: ${regularCount}, 自定义: ${customCount})`;
+        }
+        
+        // 创建常规标注
+        window.createRegularAnnotation = function() {
+            try {
+                const x = Math.random() * 700 + 50;
+                const y = Math.random() * 500 + 50;
+                const direction = Math.random() * 360;
+                
+                const keypoint = annotationTool.addKeypointWithDirection(x, y, direction);
+                
+                document.getElementById('create-results').textContent = 
+                    `✅ 创建常规标注成功:\n` +
+                    `ID: ${keypoint.id}\n` +
+                    `位置: (${x.toFixed(1)}, ${y.toFixed(1)})\n` +
+                    `方向: ${direction.toFixed(1)}°\n` +
+                    `序号: ${keypoint.order}\n` +
+                    `类型: ${keypoint.annotationType}`;
+                
+                updateKeypointsCount();
+                
+            } catch (error) {
+                document.getElementById('create-results').textContent = 
+                    `❌ 创建常规标注失败: ${error.message}`;
+            }
+        };
+        
+        // 创建自定义点标注
+        window.createCustomPointAnnotation = function() {
+            try {
+                const x = Math.random() * 700 + 50;
+                const y = Math.random() * 500 + 50;
+                const pointType = customTypes.get('point');
+                
+                const keypoint = annotationTool.addCustomPointAnnotation(x, y, pointType.id);
+                
+                document.getElementById('create-results').textContent = 
+                    `✅ 创建自定义点标注成功:\n` +
+                    `ID: ${keypoint.id}\n` +
+                    `位置: (${x.toFixed(1)}, ${y.toFixed(1)})\n` +
+                    `类型: ${keypoint.annotationType}\n` +
+                    `自定义类型: ${pointType.name} (${pointType.color})\n` +
+                    `序号: ${keypoint.order}`;
+                
+                updateKeypointsCount();
+                
+            } catch (error) {
+                document.getElementById('create-results').textContent = 
+                    `❌ 创建自定义点标注失败: ${error.message}`;
+            }
+        };
+        
+        // 创建自定义区域标注
+        window.createCustomRegionAnnotation = function() {
+            try {
+                const x = Math.random() * 600 + 50;
+                const y = Math.random() * 400 + 50;
+                const width = Math.random() * 100 + 50;
+                const height = Math.random() * 100 + 50;
+                const regionType = customTypes.get('region');
+                
+                const keypoint = annotationTool.addCustomRegionAnnotation(x, y, width, height, regionType.id);
+                
+                document.getElementById('create-results').textContent = 
+                    `✅ 创建自定义区域标注成功:\n` +
+                    `ID: ${keypoint.id}\n` +
+                    `位置: (${x.toFixed(1)}, ${y.toFixed(1)})\n` +
+                    `尺寸: ${width.toFixed(1)} × ${height.toFixed(1)}\n` +
+                    `类型: ${keypoint.annotationType}\n` +
+                    `自定义类型: ${regionType.name} (${regionType.color})\n` +
+                    `序号: ${keypoint.order}`;
+                
+                updateKeypointsCount();
+                
+            } catch (error) {
+                document.getElementById('create-results').textContent = 
+                    `❌ 创建自定义区域标注失败: ${error.message}`;
+            }
+        };
+        
+        // 删除最后一个标注
+        window.deleteLastAnnotation = function() {
+            try {
+                if (annotationTool.keypoints.length === 0) {
+                    document.getElementById('delete-results').textContent = 
+                        `⚠️ 没有标注可删除`;
+                    return;
+                }
+                
+                const lastKeypoint = annotationTool.keypoints[annotationTool.keypoints.length - 1];
+                const info = `ID: ${lastKeypoint.id}, 序号: ${lastKeypoint.order}, 类型: ${lastKeypoint.annotationType}`;
+                
+                annotationTool.removeKeypoint(lastKeypoint);
+                
+                document.getElementById('delete-results').textContent = 
+                    `✅ 删除标注成功:\n${info}`;
+                
+                updateKeypointsCount();
+                
+            } catch (error) {
+                document.getElementById('delete-results').textContent = 
+                    `❌ 删除标注失败: ${error.message}`;
+            }
+        };
+        
+        // 清除所有标注
+        window.clearAllAnnotations = function() {
+            try {
+                const count = annotationTool.keypoints.length;
+                annotationTool.clearKeypoints();
+                
+                document.getElementById('delete-results').textContent = 
+                    `✅ 清除所有标注成功，共删除 ${count} 个标注`;
+                
+                updateKeypointsCount();
+                
+            } catch (error) {
+                document.getElementById('delete-results').textContent = 
+                    `❌ 清除标注失败: ${error.message}`;
+            }
+        };
+        
+        // 更新标注列表
+        window.updateAnnotationList = function() {
+            try {
+                const keypoints = annotationTool.keypoints;
+                if (keypoints.length === 0) {
+                    document.getElementById('annotation-list').textContent = '当前没有标注';
+                    return;
+                }
+                
+                let listText = '标注列表:\n';
+                keypoints.forEach((kp, index) => {
+                    listText += `${index + 1}. 序号:${kp.order} ID:${kp.id} `;
+                    listText += `位置:(${kp.x.toFixed(1)}, ${kp.y.toFixed(1)}) `;
+                    listText += `类型:${kp.annotationType}`;
+                    
+                    if (kp.annotationType === 'custom') {
+                        const customType = customAnnotationManager.getCustomType(kp.customTypeId);
+                        listText += ` 自定义类型:${customType?.name || 'Unknown'}`;
+                        if (kp.width && kp.height) {
+                            listText += ` 尺寸:${kp.width.toFixed(1)}×${kp.height.toFixed(1)}`;
+                        }
+                    } else {
+                        listText += ` 方向:${kp.direction}°`;
+                    }
+                    
+                    listText += '\n';
+                });
+                
+                document.getElementById('annotation-list').textContent = listText;
+                
+            } catch (error) {
+                document.getElementById('annotation-list').textContent = 
+                    `❌ 更新列表失败: ${error.message}`;
+            }
+        };
+        
+        // 导出数据
+        window.exportData = function() {
+            try {
+                const data = annotationTool.getAnnotationData();
+                const jsonData = JSON.stringify(data, null, 2);
+                
+                document.getElementById('data-results').textContent = 
+                    `✅ 导出数据成功:\n${jsonData}`;
+                
+            } catch (error) {
+                document.getElementById('data-results').textContent = 
+                    `❌ 导出数据失败: ${error.message}`;
+            }
+        };
+        
+        // 测试持久化
+        window.testPersistence = function() {
+            try {
+                // 保存当前数据
+                const originalData = annotationTool.getAnnotationData();
+                const originalCount = originalData.keypoints.length;
+                
+                // 清空标注
+                annotationTool.clearKeypoints();
+                
+                // 重新加载数据
+                annotationTool.loadAnnotationData(originalData);
+                
+                const restoredCount = annotationTool.keypoints.length;
+                
+                document.getElementById('data-results').textContent = 
+                    `✅ 持久化测试成功:\n` +
+                    `原始标注数: ${originalCount}\n` +
+                    `恢复标注数: ${restoredCount}\n` +
+                    `数据完整性: ${originalCount === restoredCount ? '通过' : '失败'}`;
+                
+                updateKeypointsCount();
+                
+            } catch (error) {
+                document.getElementById('data-results').textContent = 
+                    `❌ 持久化测试失败: ${error.message}`;
+            }
+        };
+        
+        // 初始化
+        initializeSystem();
+    </script>
+</body>
+</html>

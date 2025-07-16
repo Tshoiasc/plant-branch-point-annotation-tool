@@ -212,6 +212,45 @@
                     Sync changes to future images in same plant and view angle
                   </div>
                 </div>
+
+                <!-- 🎯 NEW: Custom Annotation Controls -->
+                <div class="custom-annotation-section" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--border-color);">
+                  <h5 style="margin: 0 0 10px 0; font-size: 0.9rem; font-weight: 600; color: var(--text-primary);">Custom Annotations</h5>
+                  
+                  <!-- Custom Annotation Mode Status -->
+                  <div class="custom-mode-status" style="margin-bottom: 10px;">
+                    <div class="mode-indicator" style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                      <span class="mode-label" style="font-size: 0.8rem; color: var(--text-secondary);">Mode:</span>
+                      <span id="custom-mode-indicator" class="mode-value" style="font-size: 0.8rem; font-weight: 500; color: var(--text-primary);">Normal</span>
+                    </div>
+                    <div class="type-indicator" style="display: flex; align-items: center; gap: 8px;">
+                      <span class="type-label" style="font-size: 0.8rem; color: var(--text-secondary);">Type:</span>
+                      <span id="custom-type-indicator" class="type-value" style="font-size: 0.8rem; font-weight: 500; color: var(--text-primary);">None</span>
+                    </div>
+                  </div>
+                  
+                  <!-- Custom Type Quick Selector -->
+                  <div class="custom-type-selector" style="margin-bottom: 10px;">
+                    <select id="toolbar-custom-type-select" style="width: 100%; padding: 6px 8px; font-size: 0.8rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary);">
+                      <option value="">Select custom type...</option>
+                    </select>
+                  </div>
+                  
+                  <!-- Custom Annotation Action Buttons -->
+                  <div class="custom-action-buttons" style="display: flex; gap: 8px; margin-bottom: 10px;">
+                    <button id="switch-custom-mode-btn" class="btn btn-small btn-primary" style="flex: 1; font-size: 0.75rem; padding: 6px 8px;" disabled>
+                      Use Custom
+                    </button>
+                    <button id="normal-mode-btn" class="btn btn-small btn-secondary" style="flex: 1; font-size: 0.75rem; padding: 6px 8px;">
+                      Normal Mode
+                    </button>
+                  </div>
+                  
+                  <!-- Custom Annotation Settings Button -->
+                  <button id="custom-settings-btn" class="btn btn-small btn-secondary" style="width: 100%; font-size: 0.75rem; padding: 6px 8px;">
+                    ⚙️ Settings
+                  </button>
+                </div>
               </div>
               
               <!-- Time Series Annotation Status -->
@@ -622,6 +661,180 @@
         <div class="modal-footer">
           <button id="clear-confirm-btn" class="btn btn-danger">🗑️ 确认清除</button>
           <button id="clear-cancel-btn" class="btn btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custom Annotation Settings Modal -->
+    <div id="custom-annotation-settings-modal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 800px;">
+        <div class="modal-header">
+          <h3>⚙️ Custom Annotation Settings</h3>
+          <button class="modal-close" id="custom-annotation-settings-close"></button>
+        </div>
+        <div class="modal-body">
+          <!-- Settings Tabs -->
+          <div class="settings-tabs" style="margin-bottom: 20px;">
+            <button class="tab-button active" data-tab="manage-types">Manage Types</button>
+            <button class="tab-button" data-tab="current-mode">Current Mode</button>
+            <button class="tab-button" data-tab="export-import">Export/Import</button>
+          </div>
+
+          <!-- Manage Types Tab -->
+          <div id="manage-types-tab" class="tab-content active">
+            <div class="section-header" style="margin-bottom: 20px;">
+              <h4>Custom Annotation Types</h4>
+              <button id="add-custom-type-btn" class="btn btn-primary">+ Add New Type</button>
+            </div>
+
+            <!-- Custom Types List -->
+            <div id="custom-types-list" class="custom-types-list">
+              <div id="no-custom-types" class="placeholder-message" style="text-align: center; color: #6b7280; padding: 40px;">
+                <div style="font-size: 48px; margin-bottom: 16px;">🎯</div>
+                <h4 style="margin: 0 0 8px 0;">No Custom Types Created</h4>
+                <p style="margin: 0;">Create custom annotation types for special keypoints and regions</p>
+              </div>
+            </div>
+
+            <!-- Add/Edit Type Form -->
+            <div id="type-form-section" class="type-form-section" style="display: none;">
+              <h4 id="form-title">Add New Custom Type</h4>
+              <form id="custom-type-form">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="type-name">Type Name *</label>
+                    <input type="text" id="type-name" name="name" placeholder="e.g., 特殊关键点" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="type-id">Type ID *</label>
+                    <input type="text" id="type-id" name="id" placeholder="e.g., special-point" required>
+                    <small>Unique identifier (letters, numbers, hyphens only)</small>
+                  </div>
+                </div>
+                
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="type-type">Type *</label>
+                    <select id="type-type" name="type" required>
+                      <option value="">Select type...</option>
+                      <option value="point">Point (Click to place)</option>
+                      <option value="region">Region (Drag to draw)</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="type-color">Color *</label>
+                    <div class="color-input-container">
+                      <input type="color" id="type-color" name="color" value="#ff6b35" required>
+                      <input type="text" id="type-color-text" placeholder="#ff6b35" maxlength="7">
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="type-description">Description</label>
+                  <textarea id="type-description" name="description" placeholder="Describe the purpose of this annotation type..."></textarea>
+                </div>
+
+                <div class="form-group">
+                  <label for="type-category">Category</label>
+                  <input type="text" id="type-category" name="category" placeholder="e.g., morphology, disease, measurement">
+                </div>
+
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-primary">
+                    <span id="form-submit-text">Create Type</span>
+                  </button>
+                  <button type="button" id="cancel-form-btn" class="btn btn-secondary">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Current Mode Tab -->
+          <div id="current-mode-tab" class="tab-content">
+            <div class="mode-status-section">
+              <h4>Current Annotation Mode</h4>
+              <div id="current-mode-display" class="mode-display">
+                <div class="mode-info">
+                  <span class="mode-label">Mode:</span>
+                  <span id="current-mode-value" class="mode-value">Normal</span>
+                </div>
+                <div class="mode-info">
+                  <span class="mode-label">Selected Type:</span>
+                  <span id="current-type-value" class="mode-value">None</span>
+                </div>
+              </div>
+              
+              <div class="mode-actions" style="margin-top: 20px;">
+                <button id="switch-to-normal-btn" class="btn btn-secondary">Switch to Normal Mode</button>
+                <div id="custom-type-selector" style="margin-top: 15px;">
+                  <label for="select-custom-type">Select Custom Type:</label>
+                  <select id="select-custom-type">
+                    <option value="">Choose a custom type...</option>
+                  </select>
+                  <button id="switch-to-custom-btn" class="btn btn-primary" disabled>Switch to Custom Mode</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="usage-instructions" style="margin-top: 30px;">
+              <h4>Usage Instructions</h4>
+              <div class="instruction-group">
+                <h5>Point Annotations:</h5>
+                <ul>
+                  <li>Select a point type from the dropdown above</li>
+                  <li>Click "Switch to Custom Mode"</li>
+                  <li>Click anywhere on the image to place a point annotation</li>
+                  <li>Points will be numbered automatically</li>
+                </ul>
+              </div>
+              <div class="instruction-group">
+                <h5>Region Annotations:</h5>
+                <ul>
+                  <li>Select a region type from the dropdown above</li>
+                  <li>Click "Switch to Custom Mode"</li>
+                  <li>Click and drag on the image to draw a rectangular region</li>
+                  <li>Regions will be numbered automatically</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Export/Import Tab -->
+          <div id="export-import-tab" class="tab-content">
+            <div class="section-group">
+              <h4>Export Custom Annotations</h4>
+              <p>Export all custom annotation types and annotations to a JSON file.</p>
+              <div class="export-stats" id="export-stats">
+                <div class="stat-item">
+                  <span class="stat-label">Custom Types:</span>
+                  <span id="export-types-count" class="stat-value">0</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Total Annotations:</span>
+                  <span id="export-annotations-count" class="stat-value">0</span>
+                </div>
+              </div>
+              <button id="export-custom-data-btn" class="btn btn-primary">📤 Export Custom Data</button>
+            </div>
+
+            <div class="section-group" style="margin-top: 30px;">
+              <h4>Import Custom Annotations</h4>
+              <p>Import custom annotation types and annotations from a JSON file.</p>
+              <div class="import-area">
+                <input type="file" id="import-file-input" accept=".json" style="display: none;">
+                <button id="select-import-file-btn" class="btn btn-secondary">📁 Select File</button>
+                <div id="import-file-info" class="file-info" style="display: none;">
+                  <span id="import-file-name" class="file-name"></span>
+                  <button id="import-execute-btn" class="btn btn-primary">📥 Import Data</button>
+                </div>
+              </div>
+              <div id="import-results" class="import-results" style="display: none;">
+                <h5>Import Results:</h5>
+                <div id="import-results-content"></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

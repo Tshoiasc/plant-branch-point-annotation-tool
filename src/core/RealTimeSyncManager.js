@@ -22,7 +22,11 @@ class RealTimeSyncManager {
     this.OPERATION_TYPES = {
       ADD_KEYPOINT: 'ADD_KEYPOINT',
       MOVE_KEYPOINT: 'MOVE_KEYPOINT',
-      DELETE_KEYPOINT: 'DELETE_KEYPOINT'
+      DELETE_KEYPOINT: 'DELETE_KEYPOINT',
+      CUSTOM_ANNOTATION_CREATE: 'CUSTOM_ANNOTATION_CREATE',
+      CUSTOM_ANNOTATION_UPDATE: 'CUSTOM_ANNOTATION_UPDATE',
+      CUSTOM_ANNOTATION_DELETE: 'CUSTOM_ANNOTATION_DELETE',
+      CUSTOM_TYPE_CREATE: 'CUSTOM_TYPE_CREATE'
     };
     
     // Event listeners for UI feedback
@@ -128,17 +132,29 @@ class RealTimeSyncManager {
 
       // Get current image date for comparison
       const currentDate = new Date(currentImage.dateTime);
+      const currentImageIndex = allImages.findIndex(img => img.id === currentImage.id);
 
-      // Filter future images (images with later dates)
-      const futureImages = allImages.filter(img => {
-        const imgDate = new Date(img.dateTime);
-        return imgDate > currentDate;
-      });
+      // 🔧 FIX: Context-aware sync logic to prevent wrong annotations
+      // Instead of syncing to all later dates, only sync to images that come 
+      // after the current image in sequence AND have later dates
+      
+      const futureImages = [];
+      
+      // Only consider images after current image in the sequence
+      for (let i = currentImageIndex + 1; i < allImages.length; i++) {
+        const image = allImages[i];
+        const imgDate = new Date(image.dateTime);
+        
+        // Only include if it's actually a later date (maintain chronological requirement)
+        if (imgDate > currentDate) {
+          futureImages.push(image);
+        }
+      }
 
       // Sort by date to ensure chronological order
       futureImages.sort((a, b) => new Date(a.dateTime) - new Date(b.dateTime));
 
-      console.log(`🔄 Found ${futureImages.length} future images for sync`);
+      console.log(`🔄 Found ${futureImages.length} future images for sync (from index ${currentImageIndex + 1})`);
       return futureImages;
 
     } catch (error) {
@@ -257,6 +273,63 @@ class RealTimeSyncManager {
   }
 
   /**
+   * Sync keypoint deletion to future images
+   * @param {object} payload - Deletion payload containing keypoint and context
+   * @returns {Promise<object>} Sync result
+   */
+  async syncKeypointDeletion(payload) {
+    if (!this.isEnabled) {
+      return { success: true, message: 'Sync disabled', synced: 0 };
+    }
+
+    const { keypoint, currentImage, currentPlant } = payload;
+
+    console.log(`🔄 Starting keypoint deletion sync for keypoint ${keypoint.id}`);
+    console.log(`🔄 Current image: ${currentImage.id}, Plant: ${currentPlant.id}, View: ${currentPlant.selectedViewAngle}`);
+
+    try {
+      const futureImages = await this.getFutureImages(currentImage, currentPlant);
+      
+      if (futureImages.length === 0) {
+        console.log(`🔄 No future images found for deletion sync`);
+        return { success: true, message: 'No future images to sync', synced: 0 };
+      }
+
+      console.log(`🔄 Found ${futureImages.length} future images:`, futureImages.map(img => img.id));
+
+      let syncedCount = 0;
+      const errors = [];
+
+      // Process each future image sequentially to avoid conflicts
+      for (const image of futureImages) {
+        try {
+          console.log(`🔄 Syncing keypoint deletion to image ${image.id}...`);
+          await this.deleteKeypointFromImage(keypoint, image);
+          syncedCount++;
+          console.log(`🔄 Successfully synced deletion to image ${image.id}`);
+        } catch (error) {
+          console.error(`🔄 Error syncing deletion to image ${image.id}:`, error);
+          errors.push({ imageId: image.id, error: error.message });
+        }
+      }
+
+      const result = {
+        success: errors.length === 0,
+        message: `Synced deletion to ${syncedCount} future images`,
+        synced: syncedCount,
+        errors: errors.length > 0 ? errors : undefined
+      };
+
+      console.log(`🔄 Keypoint deletion sync completed:`, result);
+      return result;
+
+    } catch (error) {
+      console.error('🔄 Error in keypoint deletion sync:', error);
+      return { success: false, message: error.message, synced: 0 };
+    }
+  }
+
+  /**
    * Add keypoint to a specific image
    * @param {object} keypoint - Keypoint to add
    * @param {object} targetImage - Target image
@@ -277,7 +350,11 @@ class RealTimeSyncManager {
       existingKeypoint.direction = keypoint.direction;
       existingKeypoint.directionType = keypoint.directionType;
       existingKeypoint.timestamp = new Date().toISOString();
-      console.log(`🔄 Updated existing keypoint ${keypoint.id} in image ${targetImage.id}`);
+      
+      // 🔧 Enhanced Debug: Log custom annotation details
+      const typeDesc = keypoint.annotationType === 'custom' ? 
+        `custom(${keypoint.customTypeId})` : 'regular';
+      console.log(`🔄 Updated existing ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} in image ${targetImage.id}`);
     } else {
       // Add new keypoint
       const newKeypoint = {
@@ -285,7 +362,11 @@ class RealTimeSyncManager {
         timestamp: new Date().toISOString() // Update timestamp for sync
       };
       existingAnnotations.push(newKeypoint);
-      console.log(`🔄 Added new keypoint ${keypoint.id} to image ${targetImage.id}`);
+      
+      // 🔧 Enhanced Debug: Log custom annotation details
+      const typeDesc = keypoint.annotationType === 'custom' ? 
+        `custom(${keypoint.customTypeId})` : 'regular';
+      console.log(`🔄 Added new ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} to image ${targetImage.id}`);
     }
 
     // Prepare complete annotation data object
@@ -320,7 +401,11 @@ class RealTimeSyncManager {
       existingKeypoint.direction = keypoint.direction;
       existingKeypoint.directionType = keypoint.directionType;
       existingKeypoint.timestamp = new Date().toISOString();
-      console.log(`🔄 Moved keypoint ${keypoint.id} in image ${targetImage.id}`);
+      
+      // 🔧 Enhanced Debug: Log custom annotation details
+      const typeDesc = keypoint.annotationType === 'custom' ? 
+        `custom(${keypoint.customTypeId})` : 'regular';
+      console.log(`🔄 Moved ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} in image ${targetImage.id}`);
     } else {
       // Add new keypoint if it doesn't exist
       const newKeypoint = {
@@ -328,7 +413,77 @@ class RealTimeSyncManager {
         timestamp: new Date().toISOString()
       };
       existingAnnotations.push(newKeypoint);
-      console.log(`🔄 Added new keypoint ${keypoint.id} to image ${targetImage.id} (move operation)`);
+      
+      // 🔧 Enhanced Debug: Log custom annotation details
+      const typeDesc = keypoint.annotationType === 'custom' ? 
+        `custom(${keypoint.customTypeId})` : 'regular';
+      console.log(`🔄 Added new ${typeDesc} keypoint ${keypoint.id} order ${keypoint.order} to image ${targetImage.id} (move operation)`);
+    }
+
+    // Prepare complete annotation data object
+    const annotationData = {
+      imageId: targetImage.id,
+      annotations: existingAnnotations,
+      lastModified: new Date().toISOString()
+    };
+
+    // Save updated annotations
+    await this.annotationStorageManager.saveImageAnnotation(targetImage.id, annotationData);
+  }
+
+  /**
+   * Delete keypoint from a specific image with strict matching criteria
+   * @param {object} keypoint - Keypoint to delete
+   * @param {object} targetImage - Target image
+   * @returns {Promise<void>}
+   */
+  async deleteKeypointFromImage(keypoint, targetImage) {
+    // Get existing annotations for the target image
+    const existingData = await this.annotationStorageManager.getImageAnnotation(targetImage.id);
+    const existingAnnotations = existingData ? existingData.annotations : [];
+    
+    if (existingAnnotations.length === 0) {
+      console.log(`🔄 No annotations found in image ${targetImage.id} - skipping deletion`);
+      return;
+    }
+
+    // Find matching keypoint using strict criteria:
+    // 1. order must match
+    // 2. annotationType must match
+    // 3. customTypeId must match (for custom annotations)
+    const matchingIndex = existingAnnotations.findIndex(ann => {
+      const orderMatch = ann.order === keypoint.order;
+      const typeMatch = ann.annotationType === keypoint.annotationType;
+      
+      // For custom annotations, customTypeId must also match
+      const customTypeMatch = keypoint.annotationType === 'custom' 
+        ? ann.customTypeId === keypoint.customTypeId
+        : true;
+      
+      return orderMatch && typeMatch && customTypeMatch;
+    });
+    
+    if (matchingIndex !== -1) {
+      const removedKeypoint = existingAnnotations[matchingIndex];
+      existingAnnotations.splice(matchingIndex, 1);
+      
+      console.log(`🔄 Deleted keypoint from image ${targetImage.id}:`);
+      console.log(`  - Order: ${removedKeypoint.order}`);
+      console.log(`  - Type: ${removedKeypoint.annotationType}`);
+      console.log(`  - Custom Type ID: ${removedKeypoint.customTypeId || 'N/A'}`);
+      console.log(`  - ID: ${removedKeypoint.id}`);
+    } else {
+      console.log(`🔄 No matching keypoint found in image ${targetImage.id} for deletion:`);
+      console.log(`  - Looking for order: ${keypoint.order}`);
+      console.log(`  - Looking for type: ${keypoint.annotationType}`);
+      console.log(`  - Looking for custom type ID: ${keypoint.customTypeId || 'N/A'}`);
+      console.log(`  - Available annotations:`, existingAnnotations.map(ann => ({
+        order: ann.order,
+        type: ann.annotationType,
+        customTypeId: ann.customTypeId,
+        id: ann.id
+      })));
+      return;
     }
 
     // Prepare complete annotation data object
@@ -395,7 +550,7 @@ class RealTimeSyncManager {
    * @returns {Promise<void>}
    */
   async executeOperation(operation) {
-    const { type, keypoint, currentImage, currentPlant, previousPosition } = operation;
+    const { type, keypoint, currentImage, currentPlant, previousPosition, syncData } = operation;
 
     switch (type) {
       case this.OPERATION_TYPES.ADD_KEYPOINT:
@@ -405,13 +560,348 @@ class RealTimeSyncManager {
         return await this.syncKeypointMovement(keypoint, previousPosition, currentImage, currentPlant);
       
       case this.OPERATION_TYPES.DELETE_KEYPOINT:
-        // TODO: Implement keypoint deletion sync if needed
-        console.log('🔄 Keypoint deletion sync not yet implemented');
-        break;
+        // 🔧 FIX: Properly handle keypoint deletion sync
+        return await this.syncKeypointDeletion(operation);
+      
+      case this.OPERATION_TYPES.CUSTOM_ANNOTATION_CREATE:
+        return await this.syncCustomAnnotationCreate(syncData);
+      
+      case this.OPERATION_TYPES.CUSTOM_ANNOTATION_UPDATE:
+        return await this.syncCustomAnnotationUpdate(syncData);
+      
+      case this.OPERATION_TYPES.CUSTOM_ANNOTATION_DELETE:
+        return await this.syncCustomAnnotationDelete(syncData);
+      
+      case this.OPERATION_TYPES.CUSTOM_TYPE_CREATE:
+        return await this.syncCustomTypeCreate(syncData);
       
       default:
         console.warn(`🔄 Unknown sync operation type: ${type}`);
     }
+  }
+
+  /**
+   * Sync custom annotation creation to future images
+   * @param {object} syncData - Custom annotation sync data
+   * @returns {Promise<object>} Sync result
+   */
+  async syncCustomAnnotationCreate(syncData) {
+    console.log('🔄 Starting custom annotation creation sync:', syncData);
+    
+    try {
+      // Extract context information
+      const { annotation, context } = syncData;
+      const { appState } = context;
+      
+      if (!appState?.currentImage || !appState?.currentPlant) {
+        console.warn('🔄 Missing app state for custom annotation sync');
+        return { success: false, message: 'Missing app state', synced: 0 };
+      }
+      
+      const futureImages = await this.getFutureImages(appState.currentImage, appState.currentPlant);
+      
+      if (futureImages.length === 0) {
+        console.log('🔄 No future images found for custom annotation sync');
+        return { success: true, message: 'No future images to sync', synced: 0 };
+      }
+      
+      let syncedCount = 0;
+      const errors = [];
+      
+      // Process each future image sequentially
+      for (const image of futureImages) {
+        try {
+          console.log(`🔄 Syncing custom annotation to image ${image.id}...`);
+          await this.addCustomAnnotationToImage(annotation, image);
+          syncedCount++;
+          console.log(`🔄 Successfully synced custom annotation to image ${image.id}`);
+        } catch (error) {
+          console.error(`🔄 Error syncing custom annotation to image ${image.id}:`, error);
+          errors.push({ imageId: image.id, error: error.message });
+        }
+      }
+      
+      const result = {
+        success: errors.length === 0,
+        message: `Synced custom annotation to ${syncedCount} future images`,
+        synced: syncedCount,
+        errors: errors.length > 0 ? errors : undefined
+      };
+      
+      console.log('🔄 Custom annotation creation sync completed:', result);
+      return result;
+      
+    } catch (error) {
+      console.error('🔄 Error in custom annotation creation sync:', error);
+      return { success: false, message: error.message, synced: 0 };
+    }
+  }
+
+  /**
+   * Sync custom annotation update to future images
+   * @param {object} syncData - Custom annotation sync data
+   * @returns {Promise<object>} Sync result
+   */
+  async syncCustomAnnotationUpdate(syncData) {
+    console.log('🔄 Starting custom annotation update sync:', syncData);
+    
+    try {
+      // Extract context information
+      const { annotation, context } = syncData;
+      const { appState } = context;
+      
+      if (!appState?.currentImage || !appState?.currentPlant) {
+        console.warn('🔄 Missing app state for custom annotation update sync');
+        return { success: false, message: 'Missing app state', synced: 0 };
+      }
+      
+      const futureImages = await this.getFutureImages(appState.currentImage, appState.currentPlant);
+      
+      if (futureImages.length === 0) {
+        return { success: true, message: 'No future images to sync', synced: 0 };
+      }
+      
+      let syncedCount = 0;
+      const errors = [];
+      
+      // Process each future image sequentially
+      for (const image of futureImages) {
+        try {
+          await this.updateCustomAnnotationInImage(annotation, image);
+          syncedCount++;
+        } catch (error) {
+          console.error(`🔄 Error updating custom annotation in image ${image.id}:`, error);
+          errors.push({ imageId: image.id, error: error.message });
+        }
+      }
+      
+      const result = {
+        success: errors.length === 0,
+        message: `Updated custom annotation in ${syncedCount} future images`,
+        synced: syncedCount,
+        errors: errors.length > 0 ? errors : undefined
+      };
+      
+      console.log('🔄 Custom annotation update sync completed:', result);
+      return result;
+      
+    } catch (error) {
+      console.error('🔄 Error in custom annotation update sync:', error);
+      return { success: false, message: error.message, synced: 0 };
+    }
+  }
+
+  /**
+   * Sync custom annotation deletion to future images
+   * @param {object} syncData - Custom annotation sync data
+   * @returns {Promise<object>} Sync result
+   */
+  async syncCustomAnnotationDelete(syncData) {
+    console.log('🔄 Starting custom annotation deletion sync:', syncData);
+    
+    try {
+      // Extract context information
+      const { annotation, context } = syncData;
+      const { appState } = context;
+      
+      if (!appState?.currentImage || !appState?.currentPlant) {
+        console.warn('🔄 Missing app state for custom annotation deletion sync');
+        return { success: false, message: 'Missing app state', synced: 0 };
+      }
+      
+      const futureImages = await this.getFutureImages(appState.currentImage, appState.currentPlant);
+      
+      if (futureImages.length === 0) {
+        return { success: true, message: 'No future images to sync', synced: 0 };
+      }
+      
+      let syncedCount = 0;
+      const errors = [];
+      
+      // Process each future image sequentially
+      for (const image of futureImages) {
+        try {
+          await this.deleteCustomAnnotationFromImage(annotation, image);
+          syncedCount++;
+        } catch (error) {
+          console.error(`🔄 Error deleting custom annotation from image ${image.id}:`, error);
+          errors.push({ imageId: image.id, error: error.message });
+        }
+      }
+      
+      const result = {
+        success: errors.length === 0,
+        message: `Deleted custom annotation from ${syncedCount} future images`,
+        synced: syncedCount,
+        errors: errors.length > 0 ? errors : undefined
+      };
+      
+      console.log('🔄 Custom annotation deletion sync completed:', result);
+      return result;
+      
+    } catch (error) {
+      console.error('🔄 Error in custom annotation deletion sync:', error);
+      return { success: false, message: error.message, synced: 0 };
+    }
+  }
+
+  /**
+   * Sync custom type creation to future images
+   * @param {object} syncData - Custom type sync data
+   * @returns {Promise<object>} Sync result
+   */
+  async syncCustomTypeCreate(syncData) {
+    console.log('🔄 Starting custom type creation sync:', syncData);
+    
+    // For custom type creation, we typically don't need to sync to future images
+    // since types are global and don't belong to specific images
+    // This is more of a metadata sync that could be handled separately
+    
+    console.log('🔄 Custom type creation sync - no image sync needed');
+    return { success: true, message: 'Custom type created (no image sync required)', synced: 0 };
+  }
+
+  /**
+   * Add custom annotation to a specific image
+   * @param {object} annotation - Custom annotation to add
+   * @param {object} targetImage - Target image
+   * @returns {Promise<void>}
+   */
+  async addCustomAnnotationToImage(annotation, targetImage) {
+    // Get existing annotations for the target image
+    const existingData = await this.annotationStorageManager.getImageAnnotation(targetImage.id);
+    const existingAnnotations = existingData ? existingData.annotations : [];
+    
+    // 🔧 FIX: Use order-based matching for custom annotations (not ID-based)
+    // This is the core of real-time sync: sync by order + custom type, not by ID
+    const existingCustomAnnotation = existingAnnotations.find(ann => 
+      ann.annotationType === 'custom' && 
+      ann.customTypeId === annotation.customTypeId &&
+      ann.order === annotation.order
+    );
+    
+    if (existingCustomAnnotation) {
+      // Update existing custom annotation with same order and type
+      Object.assign(existingCustomAnnotation, annotation);
+      existingCustomAnnotation.timestamp = new Date().toISOString();
+      
+      console.log(`🔄 Updated existing custom annotation order ${annotation.order} type ${annotation.customTypeId} in image ${targetImage.id}`);
+    } else {
+      // 🔧 FIX: Remove conflict detection - order-based sync is the intended behavior
+      // The previous conflict detection was preventing legitimate sync operations
+      // Real-time sync SHOULD create annotations with same order on future frames
+      
+      // Add new custom annotation
+      const newAnnotation = {
+        ...annotation,
+        timestamp: new Date().toISOString()
+      };
+      existingAnnotations.push(newAnnotation);
+      
+      console.log(`🔄 Added new custom annotation order ${annotation.order} type ${annotation.customTypeId} to image ${targetImage.id}`);
+    }
+
+    // Prepare complete annotation data object
+    const annotationData = {
+      imageId: targetImage.id,
+      annotations: existingAnnotations,
+      lastModified: new Date().toISOString()
+    };
+
+    // Save updated annotations
+    await this.annotationStorageManager.saveImageAnnotation(targetImage.id, annotationData);
+  }
+
+  /**
+   * Update custom annotation in a specific image
+   * @param {object} annotation - Custom annotation with updates
+   * @param {object} targetImage - Target image
+   * @returns {Promise<void>}
+   */
+  async updateCustomAnnotationInImage(annotation, targetImage) {
+    // Get existing annotations for the target image
+    const existingData = await this.annotationStorageManager.getImageAnnotation(targetImage.id);
+    const existingAnnotations = existingData ? existingData.annotations : [];
+    
+    // 🔧 FIX: Use order-based matching for custom annotations (not ID-based)
+    // This is crucial for move operations - we need to match by order + type, not ID
+    const existingCustomAnnotation = existingAnnotations.find(ann => 
+      ann.annotationType === 'custom' && 
+      ann.customTypeId === annotation.customTypeId &&
+      ann.order === annotation.order
+    );
+    
+    if (existingCustomAnnotation) {
+      // Update existing custom annotation with same order and type
+      Object.assign(existingCustomAnnotation, annotation);
+      existingCustomAnnotation.timestamp = new Date().toISOString();
+      
+      console.log(`🔄 Updated custom annotation order ${annotation.order} type ${annotation.customTypeId} in image ${targetImage.id}`);
+    } else {
+      // Add new custom annotation if it doesn't exist (order-based sync)
+      const newAnnotation = {
+        ...annotation,
+        timestamp: new Date().toISOString()
+      };
+      existingAnnotations.push(newAnnotation);
+      
+      console.log(`🔄 Added new custom annotation order ${annotation.order} type ${annotation.customTypeId} to image ${targetImage.id} (update operation)`);
+    }
+
+    // Prepare complete annotation data object
+    const annotationData = {
+      imageId: targetImage.id,
+      annotations: existingAnnotations,
+      lastModified: new Date().toISOString()
+    };
+
+    // Save updated annotations
+    await this.annotationStorageManager.saveImageAnnotation(targetImage.id, annotationData);
+  }
+
+  /**
+   * Delete custom annotation from a specific image
+   * @param {object} annotation - Custom annotation to delete
+   * @param {object} targetImage - Target image
+   * @returns {Promise<void>}
+   */
+  async deleteCustomAnnotationFromImage(annotation, targetImage) {
+    // Get existing annotations for the target image
+    const existingData = await this.annotationStorageManager.getImageAnnotation(targetImage.id);
+    const existingAnnotations = existingData ? existingData.annotations : [];
+    
+    if (existingAnnotations.length === 0) {
+      console.log(`🔄 No annotations found in image ${targetImage.id} - skipping custom annotation deletion`);
+      return;
+    }
+
+    // 🔧 FIX: Use order-based matching for custom annotations (not ID-based)
+    // This is crucial for delete operations - we need to match by order + type, not ID
+    const matchingIndex = existingAnnotations.findIndex(ann => 
+      ann.annotationType === 'custom' && 
+      ann.customTypeId === annotation.customTypeId &&
+      ann.order === annotation.order
+    );
+    
+    if (matchingIndex !== -1) {
+      const removedAnnotation = existingAnnotations[matchingIndex];
+      existingAnnotations.splice(matchingIndex, 1);
+      
+      console.log(`🔄 Deleted custom annotation order ${removedAnnotation.order} type ${removedAnnotation.customTypeId} from image ${targetImage.id}`);
+    } else {
+      console.log(`🔄 No matching custom annotation order ${annotation.order} type ${annotation.customTypeId} found in image ${targetImage.id} for deletion`);
+      return;
+    }
+
+    // Prepare complete annotation data object
+    const annotationData = {
+      imageId: targetImage.id,
+      annotations: existingAnnotations,
+      lastModified: new Date().toISOString()
+    };
+
+    // Save updated annotations
+    await this.annotationStorageManager.saveImageAnnotation(targetImage.id, annotationData);
   }
 
   /**
@@ -456,6 +946,51 @@ class RealTimeSyncManager {
       previousPosition,
       currentImage,
       currentPlant,
+      timestamp: new Date().toISOString()
+    };
+
+    await this.queueSyncOperation(operation);
+  }
+
+  /**
+   * Trigger sync for keypoint deletion
+   * @param {object} keypoint - Deleted keypoint
+   * @param {object} currentImage - Current image context
+   * @param {object} currentPlant - Current plant context
+   * @returns {Promise<void>}
+   */
+  async triggerKeypointDeleteSync(keypoint, currentImage, currentPlant) {
+    if (!this.isEnabled) {
+      return;
+    }
+
+    const operation = {
+      type: this.OPERATION_TYPES.DELETE_KEYPOINT,
+      keypoint,
+      currentImage,
+      currentPlant,
+      timestamp: new Date().toISOString()
+    };
+
+    await this.queueSyncOperation(operation);
+  }
+
+  /**
+   * Trigger sync for custom annotation operations
+   * @param {object} syncData - Custom annotation sync data
+   * @returns {Promise<void>}
+   */
+  async triggerCustomAnnotationSync(syncData) {
+    if (!this.isEnabled) {
+      console.log('🔄 Custom annotation sync disabled, skipping');
+      return;
+    }
+
+    console.log('🔄 Processing custom annotation sync:', syncData);
+
+    const operation = {
+      type: syncData.type,
+      syncData,
       timestamp: new Date().toISOString()
     };
 

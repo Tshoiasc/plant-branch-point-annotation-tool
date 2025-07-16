@@ -1,6 +1,6 @@
-# Plant Image Keypoint Annotation Tool
+# Plant Branch Point Annotation Tool
 
-A professional annotation tool designed for processing Brassica napus (rapeseed) datasets, featuring keypoint annotation, time-series analysis, real-time UI synchronization, and comprehensive data export capabilities.
+A professional annotation tool designed for processing Brassica napus (rapeseed) datasets, featuring intelligent keypoint annotation, custom annotation types, real-time synchronization, and comprehensive data export capabilities.
 
 <img width="5320" height="2836" alt="preview" src="https://github.com/user-attachments/assets/4b5c12ea-6458-48bc-aebf-73142078a21e" />
 
@@ -62,9 +62,19 @@ npm run dev:backend
 - ✅ **Time Series Propagation**: Automatic propagation of initial annotations to all time points
 - ✅ **Fine-tuning Mode**: Precise adjustments for intermediate time points
 - ✅ **Automated Workflow**: Automatic navigation after annotation completion
+- ✅ **Smart Annotation Ordering**: Intelligent order assignment and conflict resolution
+
+### Custom Annotation System
+- ✅ **Custom Annotation Types**: Create specialized annotation types for specific plant features
+- ✅ **Flexible Type Management**: Define point and region-based custom annotations
+- ✅ **Custom Color Schemes**: Personalized color coding for different annotation types
+- ✅ **Real-time Custom Sync**: Automatic propagation of custom annotations across time series
+- ✅ **Type-specific Ordering**: Independent numbering systems for each annotation type
+- ✅ **Visual Custom Rendering**: Enhanced visual representation of custom annotation types
 
 ### Advanced Features
 - ✅ **Real-time UI Synchronization**: Instant thumbnail updates after annotation saves
+- ✅ **Real-time Annotation Sync**: Live synchronization of annotations across future frames
 - ✅ **Comprehensive Note System**: Plant and image-level notes with bulk operations
 - ✅ **Multi-view Support**: sv-000, sv-045, sv-090 viewing angles
 - ✅ **Progress Statistics**: Real-time annotation progress and completion rate display
@@ -72,8 +82,12 @@ npm run dev:backend
 - ✅ **Performance Optimization**: Bulk API operations for faster loading
 - ✅ **Branch Point Preview**: Visual guidance for annotation consistency
 - ✅ **Automatic Movement**: Smart navigation to expected annotation positions
+- ✅ **Plant Management**: Skip/unskip and complete/uncomplete plant operations
 
 ### Recent Improvements
+- 🔧 **Custom Annotation Integration**: Full integration of custom annotation system
+- 🔧 **Fixed Real-time Sync**: Resolved custom annotation real-time synchronization issues
+- 🔧 **Enhanced Order Management**: Improved annotation numbering and type-specific ordering
 - 🔧 **Fixed Annotation Loss**: Resolved data loss during plant switching
 - 🔧 **Real-time Thumbnail Updates**: Immediate "Annotated" status display
 - 🔧 **Enhanced Note Badge Sync**: Instant note badge updates
@@ -85,7 +99,7 @@ npm run dev:backend
 ### 1. Launch Application
 
 Using any of the above startup methods, the application will run at:
-- **Frontend Interface**: http://localhost:5173
+- **Frontend Interface**: http://localhost:3000
 - **Backend API**: http://localhost:3003
 
 ### 2. Select Dataset
@@ -106,7 +120,21 @@ Using any of the above startup methods, the application will run at:
    - **Mouse Wheel**: Zoom image
    - **Shift + Drag**: Pan image
 
-### 4. Save and Export
+### 4. Custom Annotation Types
+
+1. **Create Custom Types**: Click "Custom Annotations" to create specialized annotation types
+2. **Type Configuration**: Define point or region-based types with custom colors
+3. **Switch Modes**: Toggle between regular and custom annotation modes
+4. **Visual Distinction**: Custom annotations are visually distinguished with unique colors
+
+### 5. Real-time Synchronization
+
+1. **Enable Real-time Sync**: Toggle the real-time sync feature
+2. **Automatic Propagation**: Annotations automatically sync to future frames
+3. **Type-aware Sync**: Custom and regular annotations sync independently
+4. **Context-sensitive**: Sync only applies to subsequent images in the time series
+
+### 6. Save and Export
 
 - **Save Annotation**: Save current image annotations
 - **Save as Fine-tuning**: Precise adjustments in time series
@@ -128,11 +156,17 @@ Plant Annotation Tool/
 │   │   ├── TimeSeriesAnnotationManager.js # Time series management
 │   │   ├── BranchPointPreviewManager.js # Branch point preview
 │   │   ├── NoteManager.js             # Note management system
-│   │   └── NoteUI.js                  # Note user interface
+│   │   ├── NoteUI.js                  # Note user interface
+│   │   ├── RealTimeSyncManager.js     # Real-time synchronization
+│   │   ├── CustomAnnotationManager.js # Custom annotation management
+│   │   ├── CustomAnnotationRenderer.js # Custom annotation rendering
+│   │   ├── CustomAnnotationSettingsController.js # Custom settings
+│   │   └── CustomAnnotationToolbarController.js  # Custom toolbar
 │   ├── styles/            # Style files
 │   ├── utils/             # Utility functions
+│   ├── tests/             # Test suites
 │   └── main.js           # Application entry point
-├── backend-server.js      # Backend server
+├── server.js             # Backend server
 ├── annotations/          # Annotation data storage directory
 ├── start.sh             # Unix/Linux startup script
 ├── start.bat            # Windows startup script
@@ -211,6 +245,20 @@ npm run health
 - Cross-image consistency
 - Automatic navigation assistance
 
+#### CustomAnnotationManager.js
+- Custom annotation type management
+- Flexible point and region annotation support
+- Real-time synchronization integration
+- Type-specific ordering systems
+- Visual customization support
+
+#### RealTimeSyncManager.js
+- Real-time annotation synchronization
+- Context-aware sync logic
+- Type-specific sync routing
+- Order-based annotation matching
+- Performance-optimized bulk operations
+
 ### API Endpoints
 
 #### Dataset Management
@@ -232,6 +280,14 @@ npm run health
 - `POST /api/notes/image/:plantId/:imageId` - Create image note
 - `GET /api/notes/bulk` - Bulk note retrieval
 - `GET /api/notes/stats` - Note statistics
+
+#### Data Management
+- `POST /api/save-annotations` - Save annotation data
+- `GET /api/load-annotations` - Load annotation data
+- `GET /api/annotation-stats` - Get annotation statistics
+- `GET /api/export-annotations` - Export all annotations
+- `GET /api/annotations/plant/:plantId/stats` - Get plant statistics
+- `DELETE /api/annotations/plant/:plantId` - Delete plant annotations
 
 ## 📊 Data Formats
 
@@ -325,7 +381,7 @@ Full format including time series management information:
    - Check browser permission settings
 
 3. **Service startup failure**
-   - Check if ports 3003 and 5173 are occupied
+   - Check if ports 3002 and 5173 are occupied
    - Ensure Node.js version >= 16.0.0
 
 4. **Image loading failure**
@@ -355,6 +411,8 @@ The tool includes several performance optimizations:
 - **Frontend Logs**: Browser Developer Tools Console
 - **Backend Logs**: Terminal output
 - **Performance Metrics**: Built-in timing and statistics
+- **Verification Scripts**: Debug scripts in `src/debug/` directory for system validation
+- **Test Suites**: Comprehensive testing framework with automated validation
 
 ## 🧪 Testing
 
@@ -374,11 +432,14 @@ npm run test:e2e
 
 The tool includes comprehensive testing for:
 - Annotation operations
+- Custom annotation system
+- Real-time synchronization
 - File system access
 - Data persistence
 - UI synchronization
 - Note management
 - API endpoints
+- Order management systems
 
 ## 🚀 Deployment
 
@@ -395,7 +456,7 @@ npm run preview
 ### Environment Configuration
 
 Configure environment variables:
-- `PORT`: Backend server port (default: 3003)
+- `PORT`: Backend server port (default: 3002)
 - `FRONTEND_PORT`: Frontend port (default: 5173)
 - `NODE_ENV`: Environment mode (development/production)
 
@@ -449,4 +510,4 @@ We welcome Issues and Pull Requests to improve this tool!
 
 **Technical Support**: For issues, please check log information or submit an Issue
 
-**Version**: 2.0.0 with real-time UI synchronization and performance optimizations
+**Version**: 2.0.0 with custom annotation system, real-time synchronization, and performance optimizations
