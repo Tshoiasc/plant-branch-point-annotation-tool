@@ -67,7 +67,11 @@ export class AnnotationTool {
       autoDirectionIndex: 0,               // 当前自动选择的关键点索引
       autoDirectionKeypoints: [],          // 需要自动选择方向的关键点列表
       // 新增：自动切换到预期位置
-      autoMoveToExpectedPosition: false    // 是否自动切换到预期位置
+      autoMoveToExpectedPosition: false,   // 是否自动切换到预期位置
+      // 新增：自定义区域拖拽状态
+      isCustomRegionDragging: false,       // 是否正在拖拽自定义区域
+      customRegionStartPoint: null,        // 区域拖拽开始点
+      customRegionCurrentPoint: null       // 区域拖拽当前点
     };
     
     // 图像相关
@@ -85,13 +89,27 @@ export class AnnotationTool {
     this.historyIndex = -1;
     this.maxHistorySize = 50;
     
+    // 自定义标注系统
+    this.customAnnotationManager = null;
+    this.customAnnotationRenderer = null;
+    
+    // 自定义标注拖拽状态
+    this.customAnnotationDragState = {
+      isDragging: false,
+      draggedAnnotation: null,
+      startPosition: null
+    };
+    
     // 绑定事件
     this.bindEvents();
     
     // 初始化Canvas
     this.initializeCanvas();
     
-    console.log('AnnotationTool initialized with advanced direction annotation support');
+    // 初始化自定义标注系统 - 异步但立即开始
+    this.initializeCustomAnnotationSystem();
+    
+    console.log('AnnotationTool initialized with advanced direction annotation support and custom annotations');
   }
 
   /**
@@ -455,6 +473,9 @@ export class AnnotationTool {
     
     // 绘制标注点（在变换后绘制，保持固定大小）
     this.renderKeypoints();
+    
+    // 绘制自定义标注
+    this.renderCustomAnnotations();
   }
 
   /**
@@ -474,7 +495,7 @@ export class AnnotationTool {
   }
 
   /**
-   * 渲染标注点
+   * 渲染标注点（统一版本，支持自定义类型）
    */
   renderKeypoints() {
     // 🔧 FIX: Don't render keypoints when no image is loaded to prevent "ghost" annotations
@@ -493,34 +514,12 @@ export class AnnotationTool {
     this.keypoints.forEach((keypoint, index) => {
       const screenPos = this.imageToScreen(keypoint.x, keypoint.y);
       
-      // 确定颜色（根据方向和选中状态）
-      const isHovered = this.hoveredKeypoint === keypoint;
-      const isSelected = this.state.selectedKeypoint === keypoint;
-      let fillColor;
-      
-      if (isSelected) {
-        fillColor = this.options.keypointSelectedColor;
-      } else if (isHovered) {
-        fillColor = this.options.keypointHoverColor;
-      } else if (keypoint.directionType === 'angle' || typeof keypoint.direction === 'number') {
-        // 角度类型使用特殊颜色
-        fillColor = '#00aa00'; // 绿色表示已设置角度
-      } else if (keypoint.direction === 'left') {
-        fillColor = this.options.keypointLeftColor;
-      } else if (keypoint.direction === 'right') {
-        fillColor = this.options.keypointRightColor;
+      // 🔄 NEW: 统一渲染系统 - 支持自定义类型
+      if (keypoint.annotationType === 'custom') {
+        this.renderCustomKeypoint(keypoint, screenPos, displayStrategy);
       } else {
-        // 无方向标注点使用紫色
-        fillColor = '#9333ea'; // 紫色表示无方向
+        this.renderRegularKeypoint(keypoint, screenPos, displayStrategy, index);
       }
-      
-      // 使用标注点的序号，如果没有则使用索引+1作为后备
-      const displayOrder = keypoint.order || (index + 1);
-      
-      this.renderSingleKeypoint(screenPos.x, screenPos.y, fillColor, displayOrder, keypoint.direction, displayStrategy, keypoint);
-
-      // 绘制方向箭头（支持所有类型的方向）
-      this.renderDirectionIndicator(screenPos.x, screenPos.y, keypoint.direction, keypoint);
     });
     
     // 渲染拖拽预览
@@ -538,6 +537,11 @@ export class AnnotationTool {
       this.renderDragIndicator();
     }
     
+    // 渲染自定义区域拖拽预览
+    if (this.state.isCustomRegionDragging) {
+      this.renderCustomRegionPreview();
+    }
+    
     // 渲染方向选择指引
     if (this.state.isDirectionSelectionMode && this.state.selectedKeypoint && this.state.directionSelectionPoint) {
       this.renderDirectionSelectionGuide();
@@ -550,6 +554,254 @@ export class AnnotationTool {
     this.updateAnnotationSizeInfo(displayStrategy);
   }
 
+  /**
+   * 🔄 NEW: 渲染常规标注点
+   */
+  renderRegularKeypoint(keypoint, screenPos, displayStrategy, index) {
+    // 确定颜色（根据方向和选中状态）
+    const isHovered = this.hoveredKeypoint === keypoint;
+    const isSelected = this.state.selectedKeypoint === keypoint;
+    let fillColor;
+    
+    if (isSelected) {
+      fillColor = this.options.keypointSelectedColor;
+    } else if (isHovered) {
+      fillColor = this.options.keypointHoverColor;
+    } else if (keypoint.directionType === 'angle' || typeof keypoint.direction === 'number') {
+      // 角度类型使用特殊颜色
+      fillColor = '#00aa00'; // 绿色表示已设置角度
+    } else if (keypoint.direction === 'left') {
+      fillColor = this.options.keypointLeftColor;
+    } else if (keypoint.direction === 'right') {
+      fillColor = this.options.keypointRightColor;
+    } else {
+      // 无方向标注点使用紫色
+      fillColor = '#9333ea'; // 紫色表示无方向
+    }
+    
+    // 使用标注点的序号，如果没有则使用索引+1作为后备
+    const displayOrder = keypoint.order || (index + 1);
+    
+    this.renderSingleKeypoint(screenPos.x, screenPos.y, fillColor, displayOrder, keypoint.direction, displayStrategy, keypoint);
+
+    // 绘制方向箭头（支持所有类型的方向）
+    this.renderDirectionIndicator(screenPos.x, screenPos.y, keypoint.direction, keypoint);
+  }
+  
+  /**
+   * 🔄 NEW: 渲染自定义标注点
+   */
+  renderCustomKeypoint(keypoint, screenPos, displayStrategy) {
+    const customType = this.getCustomType(keypoint.customTypeId);
+    if (!customType) {
+      console.warn(`Custom type ${keypoint.customTypeId} not found`);
+      return;
+    }
+    
+    // 确定透明度
+    const isHovered = this.hoveredKeypoint === keypoint;
+    const isSelected = this.state.selectedKeypoint === keypoint;
+    let alpha = 1;
+    
+    if (isSelected) {
+      alpha = 0.9;
+    } else if (isHovered) {
+      alpha = 0.8;
+    }
+    
+    this.ctx.save();
+    this.ctx.globalAlpha = alpha;
+    
+    if (keypoint.width && keypoint.height) {
+      // 渲染区域标注
+      this.renderCustomRegion(keypoint, screenPos, customType, displayStrategy);
+    } else {
+      // 渲染点标注
+      this.renderCustomPoint(keypoint, screenPos, customType, displayStrategy);
+    }
+    
+    this.ctx.restore();
+  }
+  
+  /**
+   * 🔄 NEW: 渲染自定义点标注
+   */
+  renderCustomPoint(keypoint, screenPos, customType, displayStrategy) {
+    // 绘制点
+    this.ctx.beginPath();
+    this.ctx.arc(screenPos.x, screenPos.y, displayStrategy.radius, 0, 2 * Math.PI);
+    this.ctx.fillStyle = customType.color;
+    this.ctx.fill();
+    
+    // 绘制边框
+    this.ctx.strokeStyle = '#ffffff';
+    this.ctx.lineWidth = displayStrategy.borderWidth;
+    this.ctx.stroke();
+    
+    // 绘制标签
+    if (displayStrategy.showInternalLabel) {
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.font = `bold ${displayStrategy.fontSize}px Arial`;
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.fillText(keypoint.order.toString(), screenPos.x, screenPos.y);
+    } else if (displayStrategy.showExternalLabel) {
+      this.renderCustomPointLabel(keypoint, screenPos, customType, displayStrategy);
+    }
+  }
+  
+  /**
+   * 🔄 NEW: 渲染自定义区域标注
+   */
+  renderCustomRegion(keypoint, screenPos, customType, displayStrategy) {
+    // 计算区域屏幕坐标
+    const bottomRightScreen = this.imageToScreen(
+      keypoint.x + keypoint.width,
+      keypoint.y + keypoint.height
+    );
+    
+    const screenWidth = bottomRightScreen.x - screenPos.x;
+    const screenHeight = bottomRightScreen.y - screenPos.y;
+    
+    // 绘制填充区域
+    this.ctx.fillStyle = customType.color;
+    this.ctx.globalAlpha = 0.2;
+    this.ctx.fillRect(screenPos.x, screenPos.y, screenWidth, screenHeight);
+    
+    // 绘制边框
+    this.ctx.globalAlpha = 1.0;
+    this.ctx.strokeStyle = customType.color;
+    this.ctx.lineWidth = displayStrategy.borderWidth;
+    this.ctx.strokeRect(screenPos.x, screenPos.y, screenWidth, screenHeight);
+    
+    // 绘制标签（在中心）
+    const centerX = screenPos.x + screenWidth / 2;
+    const centerY = screenPos.y + screenHeight / 2;
+    
+    if (displayStrategy.showInternalLabel && Math.min(screenWidth, screenHeight) > 20) {
+      this.ctx.fillStyle = customType.color;
+      this.ctx.font = `bold ${displayStrategy.fontSize}px Arial`;
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.fillText(keypoint.order.toString(), centerX, centerY);
+    }
+    
+    if (displayStrategy.showExternalLabel) {
+      this.renderCustomRegionLabel(keypoint, { x: centerX, y: screenPos.y }, customType, displayStrategy);
+    }
+  }
+  
+  /**
+   * 🔄 NEW: 渲染自定义点标签
+   */
+  renderCustomPointLabel(keypoint, screenPos, customType, displayStrategy) {
+    const labelY = screenPos.y - displayStrategy.radius - displayStrategy.labelOffset;
+    
+    this.ctx.save();
+    
+    // 创建标签文本
+    const labelText = `${customType.name} #${keypoint.order}`;
+    this.ctx.font = `${displayStrategy.fontSize}px Arial`;
+    const textMetrics = this.ctx.measureText(labelText);
+    const textWidth = textMetrics.width;
+    
+    // 绘制标签背景
+    const padding = 4;
+    this.ctx.fillStyle = customType.color;
+    this.ctx.fillRect(
+      screenPos.x - textWidth / 2 - padding,
+      labelY - displayStrategy.fontSize / 2 - padding,
+      textWidth + padding * 2,
+      displayStrategy.fontSize + padding * 2
+    );
+    
+    // 绘制标签文本
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText(labelText, screenPos.x, labelY);
+    
+    this.ctx.restore();
+  }
+  
+  /**
+   * 🔄 NEW: 渲染自定义区域标签
+   */
+  renderCustomRegionLabel(keypoint, screenPos, customType, displayStrategy) {
+    const labelY = screenPos.y - displayStrategy.labelOffset;
+    
+    this.ctx.save();
+    
+    // 创建标签文本
+    const labelText = `${customType.name} #${keypoint.order}`;
+    this.ctx.font = `${displayStrategy.fontSize}px Arial`;
+    const textMetrics = this.ctx.measureText(labelText);
+    const textWidth = textMetrics.width;
+    
+    // 绘制标签背景
+    const padding = 4;
+    this.ctx.fillStyle = customType.color;
+    this.ctx.fillRect(
+      screenPos.x - textWidth / 2 - padding,
+      labelY - displayStrategy.fontSize / 2 - padding,
+      textWidth + padding * 2,
+      displayStrategy.fontSize + padding * 2
+    );
+    
+    // 绘制标签文本
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText(labelText, screenPos.x, labelY);
+    
+    this.ctx.restore();
+  }
+  
+  /**
+   * 🔄 NEW: 渲染自定义区域拖拽预览
+   */
+  renderCustomRegionPreview() {
+    if (!this.state.isCustomRegionDragging) return;
+    
+    const startScreenPos = this.state.customRegionStartPoint;
+    const currentScreenPos = this.state.customRegionCurrentPoint;
+    
+    if (!startScreenPos || !currentScreenPos) return;
+    
+    const customType = this.customAnnotationManager?.getCurrentCustomType();
+    if (!customType || customType.type !== 'region') return;
+    
+    const left = Math.min(startScreenPos.x, currentScreenPos.x);
+    const top = Math.min(startScreenPos.y, currentScreenPos.y);
+    const width = Math.abs(currentScreenPos.x - startScreenPos.x);
+    const height = Math.abs(currentScreenPos.y - startScreenPos.y);
+    
+    this.ctx.save();
+    this.ctx.globalAlpha = 0.5;
+    
+    // 绘制预览填充
+    this.ctx.fillStyle = customType.color;
+    this.ctx.fillRect(left, top, width, height);
+    
+    // 绘制预览边框
+    this.ctx.strokeStyle = customType.color;
+    this.ctx.lineWidth = 2;
+    this.ctx.setLineDash([5, 5]);
+    this.ctx.strokeRect(left, top, width, height);
+    
+    // 绘制尺寸信息
+    this.ctx.globalAlpha = 0.8;
+    this.ctx.fillStyle = '#000000';
+    this.ctx.font = '12px Arial';
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'middle';
+    
+    const sizeText = `${Math.round(width)}x${Math.round(height)}`;
+    this.ctx.fillText(sizeText, left + width/2, top + height/2);
+    
+    this.ctx.restore();
+  }
+  
   /**
    * 渲染单个标注点
    */
@@ -836,6 +1088,18 @@ export class AnnotationTool {
         this.state.lastPanPoint = mousePos;
         this.canvas.style.cursor = 'grabbing';
       } else {
+        // 检查是否点击了自定义标注
+        const clickedCustomAnnotation = this.getCustomAnnotationAt(mousePos);
+        
+        if (clickedCustomAnnotation) {
+          // 处理自定义标注点击
+          this.handleCustomAnnotationClick(clickedCustomAnnotation, mousePos);
+          
+          // 开始拖拽自定义标注
+          this.startCustomAnnotationDrag(clickedCustomAnnotation, mousePos);
+          return;
+        }
+        
         // 检查是否点击了标注点
         const clickedKeypoint = this.getKeypointAt(mousePos);
         
@@ -879,6 +1143,13 @@ export class AnnotationTool {
             if (window.PlantAnnotationTool?.showError) {
               window.PlantAnnotationTool.showError('No Image Loaded', 'Please select and load an image before creating annotations.');
             }
+            return;
+          }
+
+          // 检查是否处于自定义标注模式
+          if (this.customAnnotationManager && this.customAnnotationManager.isInCustomMode()) {
+            // 处理自定义标注模式下的点击
+            this.handleCustomAnnotationMode(mousePos);
             return;
           }
 
@@ -935,6 +1206,10 @@ export class AnnotationTool {
       }
       // If the position is invalid, don't update the keypoint position (ignore the movement)
       
+    } else if (this.customAnnotationDragState.isDragging) {
+      // 拖拽自定义标注
+      this.updateCustomAnnotationDrag(mousePos);
+
     } else if (this.state.blankAreaClickStart) {
       // 检查是否开始了拖拽（从空白区域点击开始）
       const distance = Math.sqrt(
@@ -955,6 +1230,10 @@ export class AnnotationTool {
     } else if (this.state.isDirectionDragging) {
       // 方向拖拽处理
       this.updateDirectionDragging(mousePos);
+
+    } else if (this.state.isCustomRegionDragging) {
+      // 自定义区域拖拽处理
+      this.updateCustomRegionDrag(mousePos);
 
     } else if (this.state.isDirectionSelectionMode) {
       // 方向选择模式下的鼠标移动
@@ -988,6 +1267,27 @@ export class AnnotationTool {
       this.render();
       
     } else {
+      // 检查是否悬停在自定义标注上
+      const hoveredCustomAnnotation = this.getCustomAnnotationAt(mousePos);
+      
+      if (hoveredCustomAnnotation) {
+        // 悬停在自定义标注上
+        this.canvas.style.cursor = 'pointer';
+        
+        // 更新悬停状态
+        if (this.customAnnotationRenderer) {
+          this.customAnnotationRenderer.setHoveredAnnotation(hoveredCustomAnnotation);
+        }
+        
+        this.render();
+        return;
+      } else {
+        // 清除悬停状态
+        if (this.customAnnotationRenderer) {
+          this.customAnnotationRenderer.setHoveredAnnotation(null);
+        }
+      }
+      
       // 检查悬停的标注点
       const hoveredKeypoint = this.getKeypointAt(mousePos);
       
@@ -1001,6 +1301,15 @@ export class AnnotationTool {
           newCursor = 'pointer'; // Can click keypoints in auto mode
         } else {
           newCursor = 'crosshair'; // Allow normal interaction in auto mode
+        }
+      } else if (this.customAnnotationManager && this.customAnnotationManager.isInCustomMode()) {
+        // 🔧 FIX: Custom annotation mode - maintain crosshair cursor for annotation purposes
+        if (hoveredKeypoint) {
+          newCursor = 'pointer'; // Can still interact with existing keypoints
+        } else {
+          // Check if mouse is within valid annotation area
+          const canAnnotate = this.canAnnotateAtSilent(mousePos.x, mousePos.y);
+          newCursor = canAnnotate ? 'crosshair' : 'not-allowed';
         }
       } else {
         // Normal mode cursor logic
@@ -1096,9 +1405,20 @@ export class AnnotationTool {
       this.state.wasDraggedDuringSession = false;
     }
 
+    
+    // 完成自定义标注拖拽
+    if (this.customAnnotationDragState.isDragging) {
+      this.finishCustomAnnotationDrag();
+    }
+    
     if (this.state.isDirectionDragging) {
       // 完成方向标注
       this.finishDirectionAnnotation();
+    }
+    
+    if (this.state.isCustomRegionDragging) {
+      // 完成自定义区域拖拽
+      this.finishCustomRegionDrag();
     }
   }
 
@@ -1123,7 +1443,8 @@ export class AnnotationTool {
       y: imagePos.y,
       direction: null, // 无方向
       directionType: null,
-      order: this.findNextAvailableOrder()
+      order: this.findNextAvailableOrder(),
+      annotationType: 'regular' // 🔧 FIX: Add missing annotationType to fix numbering bug
     };
 
     this.keypoints.push(keypoint);
@@ -1644,8 +1965,16 @@ export class AnnotationTool {
     event.preventDefault();
     
     const mousePos = this.getMousePos(event);
-    const clickedKeypoint = this.getKeypointAt(mousePos);
     
+    // 首先检查是否点击了自定义标注
+    const clickedCustomAnnotation = this.getCustomAnnotationAt(mousePos);
+    if (clickedCustomAnnotation) {
+      this.removeCustomAnnotation(clickedCustomAnnotation);
+      return;
+    }
+    
+    // 如果没有自定义标注，检查常规关键点
+    const clickedKeypoint = this.getKeypointAt(mousePos);
     if (clickedKeypoint) {
       this.removeKeypoint(clickedKeypoint);
     }
@@ -1789,17 +2118,17 @@ export class AnnotationTool {
   }
 
   /**
-   * 添加带方向的标注点
+   * 添加带方向的标注点（支持自定义类型）
    */
-  addKeypointWithDirection(x, y, direction) {
+  addKeypointWithDirection(x, y, direction, customTypeId = null, width = null, height = null) {
     // 🔧 FIX: Ensure image is loaded before creating keypoints
     if (!this.imageElement || !this.imageLoaded) {
       console.warn('[AnnotationTool] Cannot add keypoint: no image loaded');
       return;
     }
 
-    // 找到最小的缺失编号
-    const order = this.findNextAvailableOrder();
+    // 🔧 FIX: 使用类型特定的序号分配
+    const order = customTypeId ? this.findNextAvailableOrderForType(customTypeId) : this.findNextAvailableOrder();
 
     // 统一方向格式：将传统的left/right转换为角度
     let normalizedDirection = direction;
@@ -1820,7 +2149,13 @@ export class AnnotationTool {
       timestamp: new Date().toISOString(),
       direction: normalizedDirection,
       directionType: 'angle', // 标记为角度类型
-      order: order  // 添加序号字段
+      order: order,  // 添加序号字段
+      
+      // 🔄 NEW: 统一标注系统 - 支持自定义类型
+      annotationType: customTypeId ? 'custom' : 'regular',
+      ...(customTypeId && { customTypeId }),
+      ...(width && { width }),
+      ...(height && { height })
     };
 
     this.keypoints.push(keypoint);
@@ -1839,20 +2174,176 @@ export class AnnotationTool {
     // 自动切换到预期位置（标注点创建后）
     this.moveToNextExpectedPosition();
 
+    const typeDesc = customTypeId ? `custom(${customTypeId})` : 'regular';
     const directionDesc = typeof normalizedDirection === 'number' ? `${normalizedDirection}°` : normalizedDirection;
-    console.log(`Added keypoint #${order} at (${x.toFixed(1)}, ${y.toFixed(1)}) with direction ${directionDesc}`);
+    console.log(`Added ${typeDesc} keypoint #${order} at (${x.toFixed(1)}, ${y.toFixed(1)}) with direction ${directionDesc}`);
+    
+    return keypoint;
   }
 
   /**
-   * 找到下一个可用的编号（最小的缺失编号）
+   * 🔄 NEW: 添加自定义点标注（统一到keypoints系统）
+   */
+  addCustomPointAnnotation(x, y, customTypeId) {
+    return this.addKeypointWithDirection(x, y, null, customTypeId);
+  }
+  
+  /**
+   * 🔄 NEW: 添加自定义区域标注（统一到keypoints系统）
+   */
+  addCustomRegionAnnotation(x, y, width, height, customTypeId) {
+    return this.addKeypointWithDirection(x, y, null, customTypeId, width, height);
+  }
+  
+  /**
+   * 🔄 NEW: 获取自定义类型定义
+   */
+  getCustomType(customTypeId) {
+    // 🔧 FIX: 直接从CustomAnnotationManager获取自定义类型
+    if (this.customAnnotationManager) {
+      return this.customAnnotationManager.getCustomType(customTypeId);
+    }
+    return this.customTypes?.get(customTypeId) || null;
+  }
+  
+  /**
+   * 🔄 NEW: 设置自定义类型定义
+   */
+  setCustomTypes(customTypes) {
+    this.customTypes = customTypes;
+  }
+  
+  /**
+   * 🔄 NEW: 处理自定义标注模式下的点击（统一版本）
+   */
+  handleUnifiedCustomAnnotationMode(mousePos) {
+    if (!this.customAnnotationManager) {
+      console.warn('Custom annotation manager not available');
+      return;
+    }
+    
+    try {
+      const customType = this.customAnnotationManager.getCurrentCustomType();
+      if (!customType) {
+        console.warn('No custom type selected');
+        return;
+      }
+      
+      const imagePos = this.screenToImage(mousePos.x, mousePos.y);
+      
+      if (customType.type === 'point') {
+        // 创建自定义点标注
+        const keypoint = this.addCustomPointAnnotation(imagePos.x, imagePos.y, customType.id);
+        if (keypoint) {
+          console.log('Created unified custom point annotation:', keypoint);
+        }
+      } else if (customType.type === 'region') {
+        // 开始拖拽区域标注
+        this.startUnifiedCustomRegionDrag(mousePos, customType.id);
+      }
+    } catch (error) {
+      console.error('Failed to handle unified custom annotation mode:', error);
+    }
+  }
+  
+  /**
+   * 🔄 NEW: 开始统一的自定义区域拖拽
+   */
+  startUnifiedCustomRegionDrag(mousePos, customTypeId) {
+    if (!this.canCreateAnnotationAt(mousePos.x, mousePos.y)) {
+      console.warn('Cannot create custom region annotation: position is outside valid area');
+      return;
+    }
+
+    this.state.isCustomRegionDragging = true;
+    this.state.customRegionStartPoint = mousePos;
+    this.state.customRegionCurrentPoint = mousePos;
+    this.state.customRegionTypeId = customTypeId;
+    this.canvas.style.cursor = 'crosshair';
+    
+    console.log('Started unified custom region drag at:', mousePos);
+  }
+  
+  /**
+   * 🔄 NEW: 完成统一的自定义区域拖拽
+   */
+  finishUnifiedCustomRegionDrag() {
+    if (!this.state.isCustomRegionDragging || !this.state.customRegionStartPoint || !this.state.customRegionCurrentPoint) {
+      this.resetCustomRegionDrag();
+      return;
+    }
+
+    const startPos = this.screenToImage(this.state.customRegionStartPoint.x, this.state.customRegionStartPoint.y);
+    const endPos = this.screenToImage(this.state.customRegionCurrentPoint.x, this.state.customRegionCurrentPoint.y);
+
+    // 检查拖拽距离是否足够
+    const width = Math.abs(endPos.x - startPos.x);
+    const height = Math.abs(endPos.y - startPos.y);
+    const minSize = 10; // 最小区域尺寸
+
+    if (width < minSize || height < minSize) {
+      console.log('Region too small, ignoring');
+      this.resetCustomRegionDrag();
+      return;
+    }
+
+    // 计算区域位置
+    const x = Math.min(startPos.x, endPos.x);
+    const y = Math.min(startPos.y, endPos.y);
+    
+    // 创建自定义区域标注
+    const keypoint = this.addCustomRegionAnnotation(x, y, width, height, this.state.customRegionTypeId);
+    
+    if (keypoint) {
+      console.log('Created unified custom region annotation:', keypoint);
+    }
+
+    this.resetCustomRegionDrag();
+  }
+  
+  /**
+   * 🔧 NEW: 为特定自定义类型找到下一个可用的编号（独立计数）
+   */
+  findNextAvailableOrderForType(customTypeId) {
+    // 只考虑相同自定义类型的标注
+    const sameTypeKeypoints = this.keypoints.filter(kp => 
+      kp.annotationType === 'custom' && kp.customTypeId === customTypeId
+    );
+    
+    if (sameTypeKeypoints.length === 0) {
+      return 1;
+    }
+    
+    // 获取该类型所有现有的编号并排序
+    const existingOrders = sameTypeKeypoints
+      .map(kp => kp.order || 0)
+      .filter(order => order > 0)
+      .sort((a, b) => a - b);
+    
+    // 找到最小的缺失编号
+    for (let i = 1; i <= existingOrders.length + 1; i++) {
+      if (!existingOrders.includes(i)) {
+        return i;
+      }
+    }
+    
+    // 如果没有缺失，返回下一个编号
+    return existingOrders.length + 1;
+  }
+
+  /**
+   * 找到下一个可用的编号（最小的缺失编号）- 只考虑常规标注
    */
   findNextAvailableOrder() {
-    if (this.keypoints.length === 0) {
+    // 🔧 FIX: 只考虑常规标注的序号，实现独立计数
+    const regularKeypoints = this.keypoints.filter(kp => kp.annotationType === 'regular');
+    
+    if (regularKeypoints.length === 0) {
       return 1;
     }
     
     // 获取所有现有的编号并排序
-    const existingOrders = this.keypoints
+    const existingOrders = regularKeypoints
       .map(kp => kp.order || 0)
       .filter(order => order > 0)
       .sort((a, b) => a - b);
@@ -1882,6 +2373,9 @@ export class AnnotationTool {
       this.saveState();
       this.render();
       
+      // 触发实时同步删除（如果启用）
+      this.triggerRealTimeSync('DELETE_KEYPOINT', removed);
+      
       // 自动保存到当前图像
       this.autoSaveCurrentImage();
       
@@ -1908,12 +2402,12 @@ export class AnnotationTool {
       // 同步分支点预览
       this.syncBranchPointPreview();
       
-      console.log('Cleared all keypoints');
+      console.log('Cleared all keypoints (unified system)');
     }
   }
 
   /**
-   * 清空所有标注点但不触发自动保存 - 用于工作区清理
+   * 清空所有标注点但不触发自动保存 - 用于工作区清理（统一版本）
    */
   clearKeypointsWithoutSave() {
     if (this.keypoints.length > 0) {
@@ -1924,7 +2418,7 @@ export class AnnotationTool {
       // 同步分支点预览但不保存
       this.syncBranchPointPreview();
       
-      console.log('Cleared all keypoints (without auto-save)');
+      console.log('Cleared all keypoints (without auto-save, unified system)');
     }
   }
 
@@ -2011,11 +2505,11 @@ export class AnnotationTool {
   }
 
   /**
-   * 获取标注数据
+   * 获取标注数据（统一版本，包含自定义标注）
    */
   getAnnotationData() {
     return {
-      keypoints: this.keypoints.map(kp => ({...kp})),
+      keypoints: this.keypoints.map(kp => ({...kp})), // 包含所有标注：常规 + 自定义
       imageInfo: this.currentImage ? {
         name: this.currentImage.name,
         width: this.imageElement?.width,
@@ -2030,11 +2524,11 @@ export class AnnotationTool {
   }
 
   /**
-   * 加载标注数据
+   * 加载标注数据（统一版本，包含自定义标注）
    */
   loadAnnotationData(data) {
     if (data.keypoints) {
-      this.keypoints = data.keypoints.map(kp => ({...kp}));
+      this.keypoints = data.keypoints.map(kp => ({...kp})); // 包含所有标注：常规 + 自定义
 
       // 为没有序号的旧数据添加序号（兼容性处理）
       this.ensureKeypointOrders();
@@ -2052,35 +2546,67 @@ export class AnnotationTool {
   }
 
   /**
-   * 确保所有标注点都有序号（兼容性处理）
+   * 确保所有标注点都有序号（兼容性处理）- 统一系统版本
    */
   ensureKeypointOrders() {
-    let hasOrderIssues = false;
+    // 🔧 FIX: 使用类型感知的序号检查，与PlantDataManager保持一致
     
-    // 检查是否有标注点没有序号
-    for (let i = 0; i < this.keypoints.length; i++) {
-      if (typeof this.keypoints[i].order !== 'number' || this.keypoints[i].order <= 0) {
-        hasOrderIssues = true;
-        break;
+    // 按类型分组标注点
+    const annotationsByType = {};
+    
+    this.keypoints.forEach(keypoint => {
+      const typeKey = keypoint.annotationType === 'custom' 
+        ? `custom:${keypoint.customTypeId || 'unknown'}`
+        : 'regular';
+      
+      if (!annotationsByType[typeKey]) {
+        annotationsByType[typeKey] = [];
       }
-    }
+      annotationsByType[typeKey].push(keypoint);
+    });
     
-    // 检查序号是否重复或不连续
-    if (!hasOrderIssues) {
-      const orders = this.keypoints.map(kp => kp.order).sort((a, b) => a - b);
-      for (let i = 0; i < orders.length; i++) {
-        if (orders[i] !== i + 1) {
-          hasOrderIssues = true;
+    let hasOrderIssues = false;
+    let totalFixed = 0;
+    
+    // 为每个类型独立检查序号
+    Object.entries(annotationsByType).forEach(([typeKey, typeAnnotations]) => {
+      let typeHasIssues = false;
+      
+      // 检查该类型是否有序号问题
+      for (let i = 0; i < typeAnnotations.length; i++) {
+        if (typeof typeAnnotations[i].order !== 'number' || typeAnnotations[i].order <= 0) {
+          typeHasIssues = true;
           break;
         }
       }
-    }
+      
+      // 检查该类型内部是否有重复序号
+      if (!typeHasIssues) {
+        const orders = typeAnnotations.map(kp => kp.order);
+        const uniqueOrders = [...new Set(orders)];
+        if (uniqueOrders.length !== orders.length) {
+          typeHasIssues = true;
+        }
+      }
+      
+      // 如果该类型有序号问题，重新分配
+      if (typeHasIssues) {
+        console.log(`发现 ${typeKey} 类型标注序号问题，正在为 ${typeAnnotations.length} 个标注点分配序号...`);
+        hasOrderIssues = true;
+        
+        // 按照原有顺序为该类型分配序号（从1开始）
+        for (let i = 0; i < typeAnnotations.length; i++) {
+          typeAnnotations[i].order = i + 1;
+        }
+        
+        totalFixed += typeAnnotations.length;
+        console.log(`已为 ${typeKey} 类型分配序号：1-${typeAnnotations.length}`);
+      }
+    });
     
-    // 如果有问题，重新整理序号
     if (hasOrderIssues) {
       console.log('发现传统数据或序号问题，正在为标注点添加/修复序号...');
-      this.reorderKeypoints();
-      console.log(`已为 ${this.keypoints.length} 个标注点分配序号`);
+      console.log(`序号修复完成：共修复 ${totalFixed} 个标注点，保持类型特定编号系统`);
     }
   }
 
@@ -2519,33 +3045,120 @@ export class AnnotationTool {
         return;
       }
 
+      // 🔧 Enhanced Debug: Log detailed keypoint information
+      const keypointInfo = {
+        id: keypoint?.id,
+        order: keypoint?.order,
+        annotationType: keypoint?.annotationType,
+        customTypeId: keypoint?.customTypeId,
+        x: keypoint?.x,
+        y: keypoint?.y
+      };
+
       console.log(`🔄 触发实时同步: ${operationType}`, {
-        keypoint: keypoint?.id,
+        keypoint: keypointInfo,
         plant: appState.currentPlant.id,
-        image: appState.currentImage.id
+        image: appState.currentImage.id,
+        isCustom: keypoint?.annotationType === 'custom'
       });
 
-      // 根据操作类型触发相应的同步
-      switch (operationType) {
-        case 'ADD_KEYPOINT':
-          realTimeSyncManager.triggerKeypointAddSync(
-            keypoint,
-            appState.currentImage,
-            appState.currentPlant
-          );
-          break;
-          
-        case 'MOVE_KEYPOINT':
-          realTimeSyncManager.triggerKeypointMoveSync(
-            keypoint,
-            previousPosition,
-            appState.currentImage,
-            appState.currentPlant
-          );
-          break;
-          
-        default:
-          console.warn(`🔄 未知的同步操作类型: ${operationType}`);
+      // 🔧 FIX: Route custom annotations to custom annotation sync methods
+      // This is crucial for proper order-based synchronization
+      const isCustomAnnotation = keypoint?.annotationType === 'custom';
+      
+      if (isCustomAnnotation) {
+        // Use custom annotation sync methods for custom annotations
+        console.log(`🔄 Using custom annotation sync for ${operationType}`);
+        
+        switch (operationType) {
+          case 'ADD_KEYPOINT':
+            // Create sync data for custom annotation creation
+            const createSyncData = {
+              type: 'CUSTOM_ANNOTATION_CREATE',
+              annotation: keypoint,
+              context: {
+                imageId: appState.currentImage.id,
+                plantId: appState.currentPlant.id,
+                viewAngle: appState.currentPlant.selectedViewAngle,
+                appState: appState
+              },
+              timestamp: new Date().toISOString()
+            };
+            realTimeSyncManager.triggerCustomAnnotationSync(createSyncData);
+            break;
+            
+          case 'MOVE_KEYPOINT':
+            // Create sync data for custom annotation update
+            const updateSyncData = {
+              type: 'CUSTOM_ANNOTATION_UPDATE',
+              annotation: keypoint,
+              context: {
+                imageId: appState.currentImage.id,
+                plantId: appState.currentPlant.id,
+                viewAngle: appState.currentPlant.selectedViewAngle,
+                appState: appState,
+                positionChange: {
+                  from: previousPosition,
+                  to: { x: keypoint.x, y: keypoint.y }
+                }
+              },
+              timestamp: new Date().toISOString()
+            };
+            realTimeSyncManager.triggerCustomAnnotationSync(updateSyncData);
+            break;
+            
+          case 'DELETE_KEYPOINT':
+            // Create sync data for custom annotation deletion
+            const deleteSyncData = {
+              type: 'CUSTOM_ANNOTATION_DELETE',
+              annotation: keypoint,
+              context: {
+                imageId: appState.currentImage.id,
+                plantId: appState.currentPlant.id,
+                viewAngle: appState.currentPlant.selectedViewAngle,
+                appState: appState
+              },
+              timestamp: new Date().toISOString()
+            };
+            realTimeSyncManager.triggerCustomAnnotationSync(deleteSyncData);
+            break;
+            
+          default:
+            console.warn(`🔄 未知的自定义标注同步操作类型: ${operationType}`);
+        }
+      } else {
+        // Use regular keypoint sync methods for regular annotations
+        console.log(`🔄 Using regular keypoint sync for ${operationType}`);
+        
+        switch (operationType) {
+          case 'ADD_KEYPOINT':
+            realTimeSyncManager.triggerKeypointAddSync(
+              keypoint,
+              appState.currentImage,
+              appState.currentPlant
+            );
+            break;
+            
+          case 'MOVE_KEYPOINT':
+            realTimeSyncManager.triggerKeypointMoveSync(
+              keypoint,
+              previousPosition,
+              appState.currentImage,
+              appState.currentPlant
+            );
+            break;
+            
+          case 'DELETE_KEYPOINT':
+            realTimeSyncManager.triggerKeypointDeleteSync(
+              keypoint,
+              appState.currentImage,
+              appState.currentPlant
+            );
+            break;
+            
+          default:
+            console.warn(`🔄 未知的常规标注同步操作类型: ${operationType}`);
+        }
       }
       
     } catch (error) {
@@ -3139,5 +3752,377 @@ export class AnnotationTool {
     if (window.showInfo) {
       window.showInfo('升级暂停', `已完成 ${completed} 个标注点的升级，剩余 ${remaining} 个。可重新点击"自动化方向选择"继续。`);
     }
+  }
+
+  /**
+   * 开始自定义标注拖拽
+   */
+  startCustomAnnotationDrag(annotation, mousePos) {
+    if (!this.customAnnotationRenderer) return;
+    
+    this.customAnnotationDragState.isDragging = true;
+    this.customAnnotationDragState.draggedAnnotation = annotation;
+    this.customAnnotationDragState.startPosition = mousePos;
+    
+    // 通知渲染器开始拖拽
+    this.customAnnotationRenderer.startDrag(annotation, mousePos);
+    
+    this.canvas.style.cursor = 'grabbing';
+    console.log('Started custom annotation drag:', annotation.id);
+  }
+  
+  /**
+   * 更新自定义标注拖拽
+   */
+  updateCustomAnnotationDrag(mousePos) {
+    if (!this.customAnnotationRenderer || !this.customAnnotationDragState.isDragging) return;
+    
+    // 更新拖拽位置
+    const updated = this.customAnnotationRenderer.updateDrag(mousePos);
+    
+    if (updated) {
+      this.render();
+    }
+  }
+  
+  /**
+   * 完成自定义标注拖拽
+   */
+  finishCustomAnnotationDrag() {
+    if (!this.customAnnotationRenderer || !this.customAnnotationDragState.isDragging) return;
+    
+    // 完成拖拽
+    const result = this.customAnnotationRenderer.finishDrag();
+    
+    if (result && result.moved) {
+      // 标注被移动了，触发保存和同步
+      this.customAnnotationManager.saveToStorage();
+      
+      // 触发更新事件
+      this.customAnnotationManager.triggerEvent('onAnnotationUpdate', result.annotation);
+      
+      // 实时同步
+      this.customAnnotationManager.triggerCustomAnnotationUpdateSync(result.annotation, {
+        imageId: this.getAppState()?.currentImage?.id,
+        positionChange: {
+          from: result.startPosition,
+          to: {
+            x: result.annotation.x,
+            y: result.annotation.y
+          }
+        },
+        timestamp: new Date().toISOString()
+      });
+      
+      // 🔧 FIX: 更新预览区域 - 同步分支点预览
+      this.syncBranchPointPreview();
+      
+      console.log('Custom annotation dragged and saved:', result.annotation.id);
+    }
+    
+    // 清除拖拽状态
+    this.customAnnotationDragState.isDragging = false;
+    this.customAnnotationDragState.draggedAnnotation = null;
+    this.customAnnotationDragState.startPosition = null;
+    
+    this.canvas.style.cursor = 'crosshair';
+    this.render();
+  }
+  
+  /**
+   * 取消自定义标注拖拽
+   */
+  cancelCustomAnnotationDrag() {
+    if (!this.customAnnotationRenderer || !this.customAnnotationDragState.isDragging) return;
+    
+    // 取消拖拽
+    this.customAnnotationRenderer.cancelDrag();
+    
+    // 清除拖拽状态
+    this.customAnnotationDragState.isDragging = false;
+    this.customAnnotationDragState.draggedAnnotation = null;
+    this.customAnnotationDragState.startPosition = null;
+    
+    this.canvas.style.cursor = 'crosshair';
+    this.render();
+    
+    console.log('Cancelled custom annotation drag');
+  }
+  
+  /**
+   * 获取应用状态
+   */
+  getAppState() {
+    return window.PlantAnnotationTool?.appState;
+  }
+  
+  /**
+   * 初始化自定义标注系统
+   */
+  async initializeCustomAnnotationSystem() {
+    try {
+      // 动态导入自定义标注管理器
+      const { CustomAnnotationManager } = await import('./CustomAnnotationManager.js');
+      this.customAnnotationManager = new CustomAnnotationManager(this);
+      
+      // 🔄 NEW: 设置实时同步管理器
+      const realTimeSyncManager = window.PlantAnnotationTool?.realTimeSyncManager;
+      if (realTimeSyncManager) {
+        this.customAnnotationManager.setRealTimeSyncManager(realTimeSyncManager);
+        console.log('Custom annotation real-time sync manager connected');
+      } else {
+        console.warn('Real-time sync manager not available for custom annotations');
+      }
+      
+      // 🔧 NEW: 添加模式变化监听器同步分支点预览
+      this.customAnnotationManager.addEventListener('onModeChange', (data) => {
+        console.log('Mode changed:', data.mode, 'Type:', data.typeId);
+        this.syncBranchPointPreview();
+      });
+      
+      console.log('CustomAnnotationManager initialized');
+      
+      // 动态导入自定义标注渲染器
+      const { CustomAnnotationRenderer } = await import('./CustomAnnotationRenderer.js');
+      this.customAnnotationRenderer = new CustomAnnotationRenderer(this, this.customAnnotationManager);
+      console.log('CustomAnnotationRenderer initialized');
+      
+      // 标记系统已就绪
+      this.customAnnotationSystemReady = true;
+      
+      // 通知系统自定义标注系统已准备就绪
+      if (window.onCustomAnnotationSystemReady && typeof window.onCustomAnnotationSystemReady === 'function') {
+        setTimeout(() => {
+          window.onCustomAnnotationSystemReady();
+        }, 100); // 给一个小延迟确保完全初始化
+      }
+      
+    } catch (error) {
+      console.warn('Failed to initialize custom annotation system:', error);
+    }
+  }
+
+  /**
+   * 渲染自定义标注（统一版本）
+   * 注意：在统一系统中，自定义标注已经集成到keypoints数组中，
+   * 并通过renderKeypoints方法统一渲染，此方法仅保留兼容性
+   */
+  renderCustomAnnotations() {
+    // 在统一系统中，自定义标注已经通过 renderKeypoints() 方法渲染
+    // 这里保留方法以维持兼容性，但不执行任何操作
+    console.debug('renderCustomAnnotations called (unified system - no action needed)');
+  }
+
+  /**
+   * 获取指定位置的自定义标注（统一版本）
+   */
+  getCustomAnnotationAt(mousePos) {
+    // 在统一系统中，自定义标注存储在keypoints数组中
+    const threshold = this.options.baseKeypointRadius + 5;
+    
+    return this.keypoints.find(keypoint => {
+      // 只检查自定义标注
+      if (keypoint.annotationType !== 'custom') return false;
+      
+      const keypointScreen = this.imageToScreen(keypoint.x, keypoint.y);
+      
+      if (keypoint.width && keypoint.height) {
+        // 区域标注 - 检查是否在矩形区域内
+        const bottomRight = this.imageToScreen(keypoint.x + keypoint.width, keypoint.y + keypoint.height);
+        return mousePos.x >= keypointScreen.x && mousePos.x <= bottomRight.x &&
+               mousePos.y >= keypointScreen.y && mousePos.y <= bottomRight.y;
+      } else {
+        // 点标注 - 检查距离
+        const distance = Math.sqrt(
+          Math.pow(mousePos.x - keypointScreen.x, 2) +
+          Math.pow(mousePos.y - keypointScreen.y, 2)
+        );
+        return distance <= threshold;
+      }
+    }) || null;
+  }
+
+  /**
+   * 处理自定义标注点击（统一版本）
+   */
+  handleCustomAnnotationClick(customAnnotation, mousePos) {
+    // 在统一系统中，自定义标注点击处理与常规标注相同
+    console.log('Custom annotation clicked:', customAnnotation.id, 'type:', customAnnotation.annotationType);
+    
+    // 可以在这里添加自定义标注特有的点击逻辑
+    // 例如显示自定义标注的详细信息
+    const customType = this.getCustomType(customAnnotation.customTypeId);
+    if (customType) {
+      console.log('Custom type:', customType.name, 'color:', customType.color);
+    }
+  }
+
+  /**
+   * 处理自定义标注模式下的点击
+   */
+  handleCustomAnnotationMode(mousePos) {
+    if (!this.customAnnotationManager) {
+      console.warn('Custom annotation manager not available');
+      return;
+    }
+    
+    try {
+      const appState = window.PlantAnnotationTool?.appState;
+      const currentImageId = appState?.currentImage?.id;
+      
+      if (!currentImageId) {
+        console.warn('No current image ID available for custom annotation');
+        return;
+      }
+      
+      const customType = this.customAnnotationManager.getCurrentCustomType();
+      if (!customType) {
+        console.warn('No custom type selected');
+        return;
+      }
+      
+      if (customType.type === 'region') {
+        // 区域类型：开始拖拽
+        this.startCustomRegionDrag(mousePos);
+      } else if (customType.type === 'point') {
+        // 点类型：使用统一系统直接创建点
+        const imagePos = this.screenToImage(mousePos.x, mousePos.y);
+        
+        // 🔧 FIX: 使用统一系统方法创建自定义点标注
+        const keypoint = this.addCustomPointAnnotation(imagePos.x, imagePos.y, customType.id);
+        
+        if (keypoint) {
+          console.log('Created unified custom point annotation:', keypoint);
+          // 渲染已经在addCustomPointAnnotation中触发
+        } else {
+          console.warn('Failed to create custom point annotation');
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to handle custom annotation mode:', error);
+    }
+  }
+
+  /**
+   * 开始自定义区域拖拽
+   */
+  startCustomRegionDrag(mousePos) {
+    if (!this.canCreateAnnotationAt(mousePos.x, mousePos.y)) {
+      console.warn('Cannot create custom region annotation: position is outside valid area');
+      return;
+    }
+
+    this.state.isCustomRegionDragging = true;
+    this.state.customRegionStartPoint = mousePos;
+    this.state.customRegionCurrentPoint = mousePos;
+    this.canvas.style.cursor = 'crosshair';
+    
+    console.log('Started custom region drag at:', mousePos);
+  }
+
+  /**
+   * 更新自定义区域拖拽
+   */
+  updateCustomRegionDrag(mousePos) {
+    if (!this.state.isCustomRegionDragging) return;
+    
+    this.state.customRegionCurrentPoint = mousePos;
+    this.render(); // 重新渲染以显示拖拽预览
+  }
+
+  /**
+   * 完成自定义区域拖拽
+   */
+  finishCustomRegionDrag() {
+    if (!this.state.isCustomRegionDragging || !this.state.customRegionStartPoint || !this.state.customRegionCurrentPoint) {
+      this.resetCustomRegionDrag();
+      return;
+    }
+
+    const startPos = this.screenToImage(this.state.customRegionStartPoint.x, this.state.customRegionStartPoint.y);
+    const endPos = this.screenToImage(this.state.customRegionCurrentPoint.x, this.state.customRegionCurrentPoint.y);
+
+    // 检查拖拽距离是否足够
+    const width = Math.abs(endPos.x - startPos.x);
+    const height = Math.abs(endPos.y - startPos.y);
+    const minSize = 10; // 最小区域尺寸
+
+    if (width < minSize || height < minSize) {
+      console.log('Region too small, ignoring');
+      this.resetCustomRegionDrag();
+      return;
+    }
+
+    // 获取当前图像ID
+    const appState = window.PlantAnnotationTool?.appState;
+    const imageId = appState?.currentImage?.id;
+
+    if (!imageId) {
+      console.warn('No current image ID available for custom region annotation');
+      this.resetCustomRegionDrag();
+      return;
+    }
+
+    // 创建区域标注
+    try {
+      const currentCustomType = this.customAnnotationManager.getCurrentCustomType();
+      if (!currentCustomType) {
+        console.warn('No custom type selected for region annotation');
+        this.resetCustomRegionDrag();
+        return;
+      }
+      
+      // 计算区域位置
+      const x = Math.min(startPos.x, endPos.x);
+      const y = Math.min(startPos.y, endPos.y);
+      
+      // 🔧 FIX: 使用统一系统方法创建自定义区域标注
+      const keypoint = this.addCustomRegionAnnotation(x, y, width, height, currentCustomType.id);
+      
+      if (keypoint) {
+        console.log('Created unified custom region annotation:', keypoint);
+        // 渲染已经在addCustomRegionAnnotation中触发
+      } else {
+        console.warn('Failed to create custom region annotation');
+      }
+    } catch (error) {
+      console.error('Error creating custom region annotation:', error);
+    }
+
+    this.resetCustomRegionDrag();
+  }
+
+  /**
+   * 重置自定义区域拖拽状态
+   */
+  resetCustomRegionDrag() {
+    this.state.isCustomRegionDragging = false;
+    this.state.customRegionStartPoint = null;
+    this.state.customRegionCurrentPoint = null;
+    this.canvas.style.cursor = 'crosshair';
+    this.render();
+  }
+
+  /**
+   * 删除自定义标注（统一版本）
+   * @param {Object} customAnnotation - 要删除的自定义标注 keypoint
+   */
+  removeCustomAnnotation(customAnnotation) {
+    // 在统一系统中，自定义标注也是keypoint，直接调用removeKeypoint
+    this.removeKeypoint(customAnnotation);
+  }
+
+  /**
+   * 获取自定义标注管理器
+   */
+  getCustomAnnotationManager() {
+    return this.customAnnotationManager;
+  }
+
+  /**
+   * 获取自定义标注渲染器
+   */
+  getCustomAnnotationRenderer() {
+    return this.customAnnotationRenderer;
   }
 }
