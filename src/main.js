@@ -2080,6 +2080,13 @@ function handleCompletePlant() {
       if (plantItem) {
         const newItem = createPlantListItem(plant);
         plantItem.parentNode.replaceChild(newItem, plantItem);
+        
+        // 🔧 FIX: Update note badge for the re-rendered plant item
+        if (window.PlantAnnotationTool?.noteUI) {
+          setTimeout(() => {
+            window.PlantAnnotationTool.noteUI.updatePlantNoteBadge(plant.id);
+          }, 100);
+        }
       }
       
       // 更新统计显示
@@ -3869,6 +3876,13 @@ async function confirmSkipPlant() {
       if (plantItem) {
         const newItem = createPlantListItem(plant);
         plantItem.parentNode.replaceChild(newItem, plantItem);
+        
+        // 🔧 FIX: Update note badge for the re-rendered plant item
+        if (window.PlantAnnotationTool?.noteUI) {
+          setTimeout(() => {
+            window.PlantAnnotationTool.noteUI.updatePlantNoteBadge(plantId);
+          }, 100);
+        }
       }
 
       // 更新统计
@@ -4072,6 +4086,13 @@ async function confirmUnskipPlant() {
         const newItem = createPlantListItem(plant);
         plantItem.parentNode.replaceChild(newItem, plantItem);
         console.log(`[Debug] 植物列表项已重新渲染: ${plantId}`);
+        
+        // 🔧 FIX: Update note badge for the re-rendered plant item
+        if (window.PlantAnnotationTool?.noteUI) {
+          setTimeout(() => {
+            window.PlantAnnotationTool.noteUI.updatePlantNoteBadge(plantId);
+          }, 100);
+        }
       }
 
       // 更新统计
@@ -4150,6 +4171,13 @@ async function confirmUncompletePlant() {
       if (plantItem) {
         const newItem = createPlantListItem(plant);
         plantItem.parentNode.replaceChild(newItem, plantItem);
+        
+        // 🔧 FIX: Update note badge for the re-rendered plant item
+        if (window.PlantAnnotationTool?.noteUI) {
+          setTimeout(() => {
+            window.PlantAnnotationTool.noteUI.updatePlantNoteBadge(plantId);
+          }, 100);
+        }
       }
 
       // 更新统计
@@ -5180,7 +5208,7 @@ function updateDeletePlantAnnotationsButtonState() {
 window.updateDeletePlantAnnotationsButtonState = updateDeletePlantAnnotationsButtonState;
 
 /**
- * 🔧 ENHANCED: Handle clear all annotations with spreading deletion options
+ * 🔧 SIMPLIFIED: Handle clear all annotations - simple current image only
  */
 async function handleClearAllAnnotations() {
   if (!annotationTool) {
@@ -5194,131 +5222,32 @@ async function handleClearAllAnnotations() {
     return;
   }
   
-  // Check if we have plant and image context for spreading
-  if (!appState.currentImage || !appState.currentPlant) {
-    // Fallback to simple clear
-    if (confirm('确定要清除当前图像的所有标注点吗？')) {
-      annotationTool.clearKeypoints();
-      updateProgressInfo('已清除当前图像的标注');
-    }
-    return;
-  }
+  // Simple confirmation dialog without spreading options
+  const message = `确定要清除当前图像的 ${currentAnnotations.keypoints.length} 个标注点吗？`;
   
-  // Get future images for potential spreading
-  try {
-    const futureImages = await getFutureImagesForClearing();
-    const futureCount = futureImages ? futureImages.length : 0;
+  if (confirm(message)) {
+    // Clear current image only
+    annotationTool.clearKeypoints();
+    updateProgressInfo('已清除当前图像的标注');
     
-    // Show options dialog
-    let message = `当前图像有 ${currentAnnotations.keypoints.length} 个标注点\n`;
-    if (futureCount > 0) {
-      message += `检测到 ${futureCount} 个后续时间点图像\n\n`;
-      message += '请选择清除范围:\n';
-      message += '• 确定(OK) - 仅清除当前图像\n';
-      message += '• 取消后按Shift+点击 - 清除当前及后续图像';
-    } else {
-      message += '\n确定要清除当前图像的所有标注点吗？';
+    // Update thumbnail status
+    if (window.refreshThumbnailAnnotationStatus && appState.currentImage) {
+      await window.refreshThumbnailAnnotationStatus(appState.currentImage.id);
     }
     
-    const userChoice = confirm(message);
-    
-    if (userChoice) {
-      // Clear current image only
-      annotationTool.clearKeypoints();
-      updateProgressInfo('已清除当前图像的标注');
-      
-      // Update thumbnail status
-      if (window.refreshThumbnailAnnotationStatus) {
-        await window.refreshThumbnailAnnotationStatus(appState.currentImage.id);
-      }
-    }
-    
-  } catch (error) {
-    console.error('Failed to get future images:', error);
-    // Fallback to simple clear
-    if (confirm('确定要清除当前图像的所有标注点吗？')) {
-      annotationTool.clearKeypoints();
-      updateProgressInfo('已清除当前图像的标注');
+    // Update annotation status display
+    if (typeof updateAnnotationStatusDisplay === 'function') {
+      updateAnnotationStatusDisplay();
     }
   }
 }
 
 /**
- * 🔧 NEW: Handle spreading clear (Shift+Click)
+ * 🔧 REMOVED: Handle spreading clear (Shift+Click) 
+ * This functionality has been moved to delete-plant-annotations-btn
+ * to avoid duplication and user confusion.
  */
-async function handleSpreadingClear() {
-  try {
-    updateProgressInfo('🔍 Analyzing future images for spreading deletion...');
-    
-    const currentAnnotations = annotationTool.getAnnotationData();
-    const futureImages = await getFutureImagesForClearing();
-    const futureCount = futureImages ? futureImages.length : 0;
-    
-    if (futureCount === 0) {
-      showError('传播删除失败', '没有找到后续时间点图像\n\n提示：传播删除需要当前图像后面有其他时间点图像');
-      updateProgressInfo('⚠️ 传播删除失败：没有后续图像');
-      return;
-    }
-    
-    const confirmMessage = `⚠️ 【Shift+Click】传播删除确认\n\n` +
-      `当前图像: ${currentAnnotations.keypoints.length} 个标注点\n` +
-      `将影响: ${futureCount + 1} 个图像(包括当前图像)\n\n` +
-      `此操作将清除当前图像及所有后续时间点图像的标注，无法撤销！\n\n` +
-      `确定要继续吗？`;
-    
-    if (!confirm(confirmMessage)) {
-      updateProgressInfo('传播删除已取消');
-      return;
-    }
-    
-    // Show progress
-    updateProgressInfo('正在执行传播删除...');
-    
-    let clearedCount = 0;
-    let errors = [];
-    
-    // Clear current image
-    annotationTool.clearKeypoints();
-    clearedCount++;
-    
-    // Clear future images
-    for (const futureImage of futureImages) {
-      try {
-        await clearAnnotationsForImage(futureImage.id);
-        clearedCount++;
-        updateProgressInfo(`已清除 ${clearedCount}/${futureCount + 1} 个图像...`);
-      } catch (error) {
-        console.error(`Failed to clear image ${futureImage.id}:`, error);
-        errors.push(`${futureImage.id}: ${error.message}`);
-      }
-    }
-    
-    // Update thumbnails
-    if (window.refreshThumbnailAnnotationStatus) {
-      await window.refreshThumbnailAnnotationStatus(appState.currentImage.id);
-      for (const futureImage of futureImages) {
-        await window.refreshThumbnailAnnotationStatus(futureImage.id);
-      }
-    }
-    
-    // Update statistics
-    if (window.updateProgressStats) {
-      window.updateProgressStats();
-    }
-    
-    // Show result
-    if (errors.length === 0) {
-      updateProgressInfo(`✅ 传播删除完成: 成功清除 ${clearedCount} 个图像的标注`);
-    } else {
-      updateProgressInfo(`⚠️ 传播删除部分完成: ${clearedCount - errors.length}/${clearedCount} 个图像成功清除`);
-      console.warn('Some images failed to clear:', errors);
-    }
-    
-  } catch (error) {
-    console.error('Spreading clear failed:', error);
-    showError('传播删除失败', error.message);
-  }
-}
+// async function handleSpreadingClear() { ... } - REMOVED
 
 /**
  * 🔧 NEW: Get future images for clearing (simplified version)

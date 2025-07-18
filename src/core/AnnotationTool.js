@@ -1566,15 +1566,30 @@ export class AnnotationTool {
     // 标准化角度到 0-360 度
     const normalizedAngle = (angle + 360) % 360;
 
+    // 🔧 NEW: 记录点击坐标
+    const imagePos = this.screenToImage(mousePos.x, mousePos.y);
+    const clickData = {
+      x: imagePos.x,
+      y: imagePos.y,
+      screenX: mousePos.x,
+      screenY: mousePos.y,
+      timestamp: Date.now()
+    };
+
     console.log('[调试] 计算的角度信息', {
       deltaX, deltaY, angle, normalizedAngle,
+      clickData,
       keypointBefore: {...this.state.selectedKeypoint}
     });
 
     // 🔧 NEW: 支持多方向设置
     if (this.state.selectedKeypoint.maxDirections > 1) {
       // 多方向模式
-      const direction = { angle: normalizedAngle, type: 'angle' };
+      const direction = { 
+        angle: normalizedAngle, 
+        type: 'angle',
+        clickPosition: clickData  // 🔧 NEW: 记录点击位置
+      };
       
       if (this.addDirectionToKeypoint(this.state.selectedKeypoint, direction)) {
         // 🔧 FIX: Only increment counter after successful addition
@@ -1601,14 +1616,22 @@ export class AnnotationTool {
       this.state.selectedKeypoint.direction = normalizedAngle;
       this.state.selectedKeypoint.directionType = 'angle'; // 标记为角度类型
       
+      // 🔧 NEW: 记录点击坐标
+      this.state.selectedKeypoint.directionClick = clickData;
+      
       // 同时更新directions数组以保持一致性
-      this.state.selectedKeypoint.directions = [{ angle: normalizedAngle, type: 'angle' }];
+      this.state.selectedKeypoint.directions = [{ 
+        angle: normalizedAngle, 
+        type: 'angle',
+        clickPosition: clickData  // 🔧 NEW: 记录点击位置
+      }];
 
       console.log('[调试] 方向更新', {
         keypointId: this.state.selectedKeypoint.id,
         order: this.state.selectedKeypoint.order,
         oldDirection,
         newDirection: normalizedAngle,
+        clickData,
         keypointAfter: {...this.state.selectedKeypoint}
       });
       
@@ -4692,5 +4715,223 @@ export class AnnotationTool {
     this.ctx.textAlign = 'center';
     this.ctx.textBaseline = 'middle';
     this.ctx.fillText(directionText, textX, textY);
+  }
+
+  /**
+   * 🔧 NEW: Enhanced direction data structure with click coordinates
+   */
+  enhanceDirectionData(keypoint, clickData) {
+    return {
+      ...keypoint,
+      directionClick: {
+        x: clickData.clickX,
+        y: clickData.clickY,
+        screenX: clickData.screenX,
+        screenY: clickData.screenY,
+        timestamp: clickData.timestamp
+      }
+    };
+  }
+
+  /**
+   * 🔧 NEW: Enhanced multi-direction data structure with click coordinates
+   */
+  enhanceMultiDirectionData(keypoint, clickDataArray) {
+    const enhancedDirections = keypoint.directions.map((direction, index) => {
+      const clickData = clickDataArray[index];
+      return {
+        ...direction,
+        clickPosition: clickData ? {
+          x: clickData.clickX,
+          y: clickData.clickY,
+          screenX: clickData.screenX,
+          screenY: clickData.screenY,
+          timestamp: clickData.timestamp
+        } : null
+      };
+    });
+
+    return {
+      ...keypoint,
+      directions: enhancedDirections
+    };
+  }
+
+  /**
+   * 🔧 NEW: Handle direction selection click with coordinate recording
+   */
+  handleDirectionSelectionClick(event) {
+    if (!this.state.selectedKeypoint || !this.state.isDirectionSelectionMode) {
+      return;
+    }
+
+    const screenCoords = this.getEventCoordinates(event);
+    const imageCoords = this.screenToImage(screenCoords.x, screenCoords.y);
+    
+    // Validate click coordinates
+    if (!this.validateDirectionClick(this.state.selectedKeypoint, {
+      clickX: imageCoords.x,
+      clickY: imageCoords.y,
+      screenX: screenCoords.x,
+      screenY: screenCoords.y
+    })) {
+      return;
+    }
+
+    // Calculate angle from keypoint to click position
+    const angle = this.calculateAngleFromClick(this.state.selectedKeypoint, imageCoords);
+    
+    // Record click data
+    const clickData = {
+      x: imageCoords.x,
+      y: imageCoords.y,
+      screenX: screenCoords.x,
+      screenY: screenCoords.y,
+      timestamp: Date.now()
+    };
+
+    // Update keypoint with direction and click data
+    this.state.selectedKeypoint.direction = angle;
+    this.state.selectedKeypoint.directionType = 'angle';
+    this.state.selectedKeypoint.directionClick = clickData;
+
+    // Trigger UI update
+    this.render();
+    
+    // Exit direction selection mode
+    this.state.isDirectionSelectionMode = false;
+    this.state.selectedKeypoint = null;
+  }
+
+  /**
+   * 🔧 NEW: Validate direction click coordinates
+   */
+  validateDirectionClick(keypoint, clickData) {
+    // Check if click is within image bounds
+    if (!this.isClickWithinImageBounds(clickData)) {
+      return false;
+    }
+
+    // Check if click is within canvas bounds
+    if (!this.isClickWithinCanvasBounds(clickData)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * 🔧 NEW: Calculate angle from keypoint to click position
+   */
+  calculateAngleFromClick(keypoint, clickPosition) {
+    const deltaX = clickPosition.x - keypoint.x;
+    const deltaY = clickPosition.y - keypoint.y;
+    const angle = Math.atan2(deltaY, deltaX) * 180 / Math.PI;
+    return (angle + 360) % 360;
+  }
+
+  /**
+   * 🔧 NEW: Check if click is within canvas bounds
+   */
+  isClickWithinCanvasBounds(clickData) {
+    return clickData.screenX >= 0 && clickData.screenX <= this.canvas.width &&
+           clickData.screenY >= 0 && clickData.screenY <= this.canvas.height;
+  }
+
+  /**
+   * 🔧 NEW: Check if click is within image bounds
+   */
+  isClickWithinImageBounds(clickData) {
+    if (!this.currentImage) return false;
+    
+    return clickData.x >= 0 && clickData.x <= this.currentImage.width &&
+           clickData.y >= 0 && clickData.y <= this.currentImage.height;
+  }
+
+  /**
+   * 🔧 NEW: Convert screen coordinates to image coordinates
+   */
+  screenToImage(screenX, screenY) {
+    const imageX = (screenX - this.state.translateX) / this.state.scale;
+    const imageY = (screenY - this.state.translateY) / this.state.scale;
+    return { x: imageX, y: imageY };
+  }
+
+  /**
+   * 🔧 NEW: Handle multi-direction click with coordinate recording
+   */
+  handleMultiDirectionClick(event) {
+    if (!this.state.selectedKeypoint || !this.state.selectedKeypoint.maxDirections) {
+      return false;
+    }
+
+    const keypoint = this.state.selectedKeypoint;
+    if (keypoint.directions.length >= keypoint.maxDirections) {
+      return false;
+    }
+
+    const screenCoords = this.getEventCoordinates(event);
+    const imageCoords = this.screenToImage(screenCoords.x, screenCoords.y);
+    
+    // Calculate angle and add new direction
+    const angle = this.calculateAngleFromClick(keypoint, imageCoords);
+    
+    keypoint.directions.push({
+      angle: angle,
+      type: 'angle',
+      clickPosition: {
+        x: imageCoords.x,
+        y: imageCoords.y,
+        screenX: screenCoords.x,
+        screenY: screenCoords.y,
+        timestamp: Date.now()
+      }
+    });
+
+    return true;
+  }
+
+  /**
+   * 🔧 NEW: Get annotation data with click coordinates
+   */
+  getAnnotationData() {
+    return {
+      keypoints: this.keypoints.map(kp => ({
+        ...kp,
+        directionClick: kp.directionClick || null
+      }))
+    };
+  }
+
+  /**
+   * 🔧 NEW: Serialize annotation data with click coordinates
+   */
+  serializeAnnotationData(keypoints) {
+    return JSON.stringify(keypoints.map(kp => ({
+      ...kp,
+      directionClick: kp.directionClick || null
+    })));
+  }
+
+  /**
+   * 🔧 NEW: Deserialize annotation data with click coordinates
+   */
+  deserializeAnnotationData(data) {
+    const keypoints = JSON.parse(data);
+    return keypoints.map(kp => ({
+      ...kp,
+      directionClick: kp.directionClick || null
+    }));
+  }
+
+  /**
+   * 🔧 NEW: Get event coordinates from mouse/touch event
+   */
+  getEventCoordinates(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    };
   }
 }
