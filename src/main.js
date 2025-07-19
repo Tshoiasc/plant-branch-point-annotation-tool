@@ -87,7 +87,13 @@ const appState = {
   plants: [],
   currentPlant: null,
   currentImage: null,
-  annotations: new Map()
+  annotations: new Map(),
+  // 🔧 NEW: Navigation state management to prevent race conditions
+  navigation: {
+    isNavigating: false,
+    lastNavigationTime: 0,
+    throttleDelay: 150 // Minimum time between navigation attempts (ms)
+  }
 };
 
 /**
@@ -446,6 +452,12 @@ function bindEventListeners() {
   const autoDirectionBtn = document.getElementById('auto-direction-btn');
   if (autoDirectionBtn) {
     autoDirectionBtn.addEventListener('click', handleAutoDirectionSelection);
+  }
+
+  // 🔧 NEW: Auto Direction Mode Selector (Longitudinal vs Cross-Sectional)
+  const autoDirectionModeSelector = document.getElementById('auto-direction-mode-selector');
+  if (autoDirectionModeSelector) {
+    autoDirectionModeSelector.addEventListener('change', handleAutoDirectionModeChange);
   }
 
   // 锁定倍数控件
@@ -1636,26 +1648,57 @@ async function loadThumbnailImage(thumbnailElement, imageData) {
  * 处理图像选择
  */
 async function handleImageSelect(image, isImageSwitch = true) {
+  // 🔧 FIX: Prevent race conditions during rapid navigation
+  if (appState.navigation.isNavigating) {
+    console.log(`[Navigation] Blocked concurrent navigation to ${image.name} - already navigating`);
+    return;
+  }
+
+  // 🔧 FIX: Throttle rapid navigation attempts with user feedback
+  const now = Date.now();
+  if (now - appState.navigation.lastNavigationTime < appState.navigation.throttleDelay) {
+    console.log(`[Navigation] Throttled navigation to ${image.name} - too fast (${now - appState.navigation.lastNavigationTime}ms since last)`);
+    // 🔧 NEW: Optional visual feedback for throttled navigation
+    if (window.updateProgressInfo) {
+      const remaining = appState.navigation.throttleDelay - (now - appState.navigation.lastNavigationTime);
+      window.updateProgressInfo(`Navigation throttled - please wait ${remaining}ms`);
+      // Clear the message after a short delay
+      setTimeout(() => {
+        if (window.updateProgressInfo) {
+          window.updateProgressInfo('Ready for navigation');
+        }
+      }, remaining + 100);
+    }
+    return;
+  }
+
+  // Lock navigation
+  appState.navigation.isNavigating = true;
+  appState.navigation.lastNavigationTime = now;
+
   try {
     console.log('选择图像:', image.name);
     
     // 保存当前图像的标注（如果有的话）
     if (appState.currentImage && annotationTool) {
       try {
+        // 🔧 FIX: Store the image ID to prevent race condition corruption
+        const imageToSave = appState.currentImage.id;
         const currentAnnotations = annotationTool.getAnnotationData();
         if (currentAnnotations.keypoints.length > 0) {
+          console.log(`[Auto-save] Saving ${currentAnnotations.keypoints.length} annotations for ${imageToSave}`);
           await plantDataManager.saveImageAnnotations(
-            appState.currentImage.id,
+            imageToSave,
             currentAnnotations.keypoints
           );
-          console.log('自动保存了当前图像的标注');
+          console.log(`[Auto-save] Successfully saved annotations for ${imageToSave}`);
           
           // 🔧 FIX: 自动保存后立即刷新缩略图状态
-          await refreshThumbnailAnnotationStatus(appState.currentImage.id);
-          console.log('自动保存后缩略图状态已刷新');
+          await refreshThumbnailAnnotationStatus(imageToSave);
+          console.log(`[Auto-save] Thumbnail status refreshed for ${imageToSave}`);
         }
       } catch (error) {
-        console.warn('自动保存当前标注失败:', error);
+        console.warn(`[Auto-save] Failed to save annotations for ${appState.currentImage?.id}:`, error);
       }
     }
     
@@ -1789,6 +1832,10 @@ async function handleImageSelect(image, isImageSwitch = true) {
   } catch (error) {
     console.error('图像选择失败:', error);
     showError('图像加载失败', error.message);
+  } finally {
+    // 🔧 FIX: Always unlock navigation to prevent permanent locks
+    appState.navigation.isNavigating = false;
+    console.log(`[Navigation] Navigation unlocked after processing ${image.name}`);
   }
 }
 
@@ -2499,11 +2546,21 @@ function handleKeyboardShortcuts(event) {
         break;
       case 'ArrowLeft':
         event.preventDefault();
-        navigateToPreviousImage();
+        // 🔧 FIX: Add navigation state feedback
+        if (appState.navigation.isNavigating) {
+          console.log('[Navigation] Previous image blocked - navigation in progress');
+        } else {
+          navigateToPreviousImage();
+        }
         break;
       case 'ArrowRight':
         event.preventDefault();
-        navigateToNextImage();
+        // 🔧 FIX: Add navigation state feedback
+        if (appState.navigation.isNavigating) {
+          console.log('[Navigation] Next image blocked - navigation in progress');
+        } else {
+          navigateToNextImage();
+        }
         break;
     }
   }
@@ -3652,6 +3709,12 @@ window.toggleBranchPointPreview = function(show = null) {
  * 导航到上一张图片
  */
 async function navigateToPreviousImage() {
+  // 🔧 FIX: Additional navigation lock check
+  if (appState.navigation.isNavigating) {
+    console.log('[Navigation] navigateToPreviousImage blocked - already navigating');
+    return;
+  }
+
   if (!appState.currentPlant || !appState.currentImage) {
     console.log('没有当前植物或图像，无法导航');
     return;
@@ -3698,6 +3761,12 @@ async function navigateToPreviousImage() {
  * @returns {boolean} 是否成功切换到下一张图片
  */
 async function navigateToNextImage(autoMode = false) {
+  // 🔧 FIX: Additional navigation lock check
+  if (appState.navigation.isNavigating) {
+    console.log('[Navigation] navigateToNextImage blocked - already navigating');
+    return false;
+  }
+
   if (!appState.currentPlant || !appState.currentImage) {
     console.log('没有当前植物或图像，无法导航');
     return false;
@@ -3764,6 +3833,20 @@ function handleAutoDirectionSelection() {
     return;
   }
 
+  // 🔧 FIX: Read mode from UI selector before starting auto direction mode
+  const modeSelector = document.getElementById('auto-direction-mode-selector');
+  if (modeSelector && modeSelector.value) {
+    console.log(`[调试] 从UI选择器读取模式: ${modeSelector.value}`);
+    annotationTool.autoDirectionMode = modeSelector.value;
+  } else {
+    // Fallback to longitudinal if no selection
+    console.log('[调试] UI选择器无值，使用默认longitudinal模式');
+    annotationTool.autoDirectionMode = 'longitudinal';
+    if (modeSelector) {
+      modeSelector.value = 'longitudinal';
+    }
+  }
+
   // 启动自动化方向升级模式
   const success = annotationTool.startAutoDirectionMode();
 
@@ -3799,6 +3882,34 @@ function handleAutoDirectionSelection() {
 
   updateProgressInfo('传统标注升级模式已启动。移动鼠标选择方向，左键确认，右键暂停。');
 }
+
+/**
+ * 重置自动方向选择按钮状态
+ */
+function resetAutoDirectionButton() {
+  const autoDirectionBtn = document.getElementById('auto-direction-btn');
+  if (autoDirectionBtn) {
+    console.log('[调试] 重置自动方向按钮状态');
+
+    // 移除暂停处理函数
+    if (autoDirectionBtn._pauseHandler) {
+      autoDirectionBtn.removeEventListener('click', autoDirectionBtn._pauseHandler);
+      autoDirectionBtn._pauseHandler = null;
+    }
+
+    // 恢复按钮外观
+    autoDirectionBtn.textContent = 'Auto Direction';
+    autoDirectionBtn.classList.remove('active');
+
+    // 重新添加原始事件监听器
+    autoDirectionBtn.addEventListener('click', handleAutoDirectionSelection);
+    
+    console.log('[调试] 自动方向按钮已重置为初始状态');
+  }
+}
+
+// 将重置函数暴露到全局，供AnnotationTool调用
+window.resetAutoDirectionButton = resetAutoDirectionButton;
 
 /**
  * 显示跳过植株模态框
@@ -4217,6 +4328,9 @@ window.showSkipPlantModal = showSkipPlantModal;
 // 🔧 NEW: Global functions for state reversal operations
 window.handleUnskipPlant = handleUnskipPlant;
 
+// 🔧 FIX: Expose handleImageSelect for cross-sectional mode support
+window.handleImageSelect = handleImageSelect;
+
 /**
  * 处理锁定倍数开关变化
  */
@@ -4282,6 +4396,34 @@ function handleRealTimeChangeChange() {
     
     // 立即更新进度信息以反映状态变化
     updateProgressInfo(`实时变更同步已${isEnabled ? '开启' : '关闭'}`);
+  }
+}
+
+/**
+ * 🔧 NEW: Handle auto direction mode change (Longitudinal vs Cross-Sectional)
+ */
+function handleAutoDirectionModeChange() {
+  const autoDirectionModeSelector = document.getElementById('auto-direction-mode-selector');
+  
+  if (autoDirectionModeSelector) {
+    const selectedMode = autoDirectionModeSelector.value;
+    console.log(`Auto direction mode changed to: ${selectedMode}`);
+    
+    // Notify AnnotationTool about the mode change
+    if (annotationTool && typeof annotationTool.setAutoDirectionMode === 'function') {
+      annotationTool.setAutoDirectionMode(selectedMode);
+    }
+    
+    // Update progress info to reflect the change
+    const modeText = selectedMode === 'cross-sectional' ? 'Vertical Mode (Order by Order)' : 'Horizontal Mode (Image by Image)';
+    updateProgressInfo(`Auto direction mode set to: ${modeText}`);
+    
+    // Update UI classes for visual feedback
+    const autoDirectionBtn = document.getElementById('auto-direction-btn');
+    if (autoDirectionBtn) {
+      autoDirectionBtn.classList.remove('longitudinal-mode', 'cross-sectional-mode');
+      autoDirectionBtn.classList.add(`${selectedMode}-mode`);
+    }
   }
 }
 

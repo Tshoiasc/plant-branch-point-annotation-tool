@@ -111,6 +111,11 @@ export class AnnotationTool {
       lockStartTime: null
     };
     
+    // 🔧 NEW: Enhanced Auto Direction State Management
+    this.autoDirectionMode = 'longitudinal'; // 'longitudinal' | 'cross-sectional' - default fallback
+    this.crossSectionalState = null; // Will be initialized when cross-sectional mode starts
+    this.crossSectionalMap = new Map(); // Maps order numbers to image-annotation pairs
+    
     // 绑定事件
     this.bindEvents();
     
@@ -120,7 +125,31 @@ export class AnnotationTool {
     // 初始化自定义标注系统 - 异步但立即开始
     this.initializeCustomAnnotationSystem();
     
+    // 🔧 FIX: Initialize auto direction mode from UI selector
+    this.initializeAutoDirectionModeFromUI();
+    
     console.log('AnnotationTool initialized with advanced direction annotation support and custom annotations');
+  }
+
+  /**
+   * 🔧 FIX: Initialize auto direction mode from UI selector
+   */
+  initializeAutoDirectionModeFromUI() {
+    // Use setTimeout to ensure DOM is fully loaded
+    setTimeout(() => {
+      const modeSelector = document.getElementById('auto-direction-mode-selector');
+      if (modeSelector && modeSelector.value) {
+        this.autoDirectionMode = modeSelector.value;
+        console.log('[调试] 从UI选择器初始化自动方向模式:', this.autoDirectionMode);
+      } else {
+        // Set default value in UI selector if none exists
+        this.autoDirectionMode = 'longitudinal';
+        if (modeSelector) {
+          modeSelector.value = 'longitudinal';
+          console.log('[调试] 设置UI选择器默认值为: longitudinal');
+        }
+      }
+    }, 100);
   }
 
   /**
@@ -1108,7 +1137,7 @@ export class AnnotationTool {
   /**
    * 处理鼠标按下
    */
-  handleMouseDown(event) {
+  async handleMouseDown(event) {
     console.log('[调试] handleMouseDown 被调用', {
       button: event.button,
       timestamp: Date.now(),
@@ -1156,7 +1185,11 @@ export class AnnotationTool {
           // 如果处于方向选择模式且点击的是已选中的标注点，处理方向选择
           if (this.state.isDirectionSelectionMode && this.state.selectedKeypoint === clickedKeypoint) {
             console.log('[调试] 处理方向选择');
-            this.handleDirectionSelection(mousePos);
+            try {
+              await this.handleDirectionSelection(mousePos);
+            } catch (error) {
+              console.error('[方向选择] 处理方向选择失败:', error);
+            }
             return;
           }
 
@@ -1175,7 +1208,11 @@ export class AnnotationTool {
           if (this.state.isDirectionSelectionMode) {
             // 无论是自动模式还是手动模式，点击空白区域都应该设置方向
             console.log('[调试] 方向选择模式下点击，处理方向选择');
-            this.handleDirectionSelection(mousePos);
+            try {
+              await this.handleDirectionSelection(mousePos);
+            } catch (error) {
+              console.error('[方向选择] 处理方向选择失败:', error);
+            }
             return;
           }
 
@@ -1504,8 +1541,14 @@ export class AnnotationTool {
     // 同步分支点预览
     this.syncBranchPointPreview();
 
-    // 自动切换到预期位置（标注点创建后）
-    this.moveToNextExpectedPosition();
+    // 🔧 FIX: Set flag to indicate we just created a new point
+    this.justCreatedNewPoint = true;
+
+    // 🔧 FIX: Only move to expected position if auto-move is enabled
+    if (this.state.autoMoveToExpectedPosition) {
+      this.moveToNextExpectedPosition();
+      this.justCreatedNewPoint = false; // Reset flag after moving
+    }
 
     console.log(`创建无方向标注点 #${keypoint.order} at (${imagePos.x.toFixed(1)}, ${imagePos.y.toFixed(1)})`);
     console.log(`当前标注点总数: ${this.keypoints.length}, 下一个编号: ${this.findNextAvailableOrder()}`);
@@ -1568,7 +1611,7 @@ export class AnnotationTool {
   /**
    * 处理方向选择
    */
-  handleDirectionSelection(mousePos) {
+  async handleDirectionSelection(mousePos) {
     console.log('[调试] handleDirectionSelection 被调用', {
       selectedKeypoint: this.state.selectedKeypoint,
       mousePos,
@@ -1665,16 +1708,103 @@ export class AnnotationTool {
       // 🔄 NEW: 实时同步 - 单方向编辑
       this.triggerRealTimeSync('EDIT_DIRECTION', this.state.selectedKeypoint);
       
-      // 如果是自动化模式，立即切换到下一个标注点
+      // 🔧 ENHANCED: Handle both longitudinal and cross-sectional auto direction modes
       if (this.state.isAutoDirectionMode) {
-        console.log('[调试] 自动模式，立即切换到下一个标注点');
-        this.selectNextAutoDirectionKeypoint();
+        console.log('[调试] 自动模式，处理下一步:', this.autoDirectionMode);
+        
+        if (this.autoDirectionMode === 'cross-sectional') {
+          // Cross-sectional mode: process current point and advance
+          await this.handleCrossSectionalDirectionSet(normalizedAngle);
+        } else {
+          // Longitudinal mode: proceed to next keypoint in current image
+          this.selectNextAutoDirectionKeypoint();
+        }
       } else {
         console.log('[调试] 非自动模式，取消方向选择');
         this.cancelDirectionSelection(true); // 强制退出
 
-        // 自动切换到预期位置（仅在非自动模式下，自动模式有自己的切换逻辑）
-        this.moveToNextExpectedPosition();
+        // 🔧 FIX: Only move to expected position if auto-move is enabled AND we just created a new point
+        // Don't auto-move when just setting direction on existing points
+        if (this.state.autoMoveToExpectedPosition && this.justCreatedNewPoint) {
+          console.log('[自动移动] 检测到新建标注点，移动到下一个预期位置');
+          this.moveToNextExpectedPosition();
+          this.justCreatedNewPoint = false; // Reset flag
+        } else {
+          console.log('[自动移动] 跳过移动 - 仅为现有标注点设置方向或auto-move已关闭');
+        }
+      }
+    }
+  }
+
+  /**
+   * 🔧 NEW: Handle Cross-Sectional Direction Set
+   * @param {number} direction - Direction angle in degrees
+   */
+  async handleCrossSectionalDirectionSet(direction) {
+    if (!this.crossSectionalState) {
+      console.error('[Cross-Sectional] No cross-sectional state available');
+      return;
+    }
+    
+    try {
+      console.log(`[Cross-Sectional] Setting direction ${direction.toFixed(1)}° for current point`);
+      
+      // 🔧 FIX: Check if cross-sectional state still exists
+      if (!this.crossSectionalState) {
+        console.warn('[Cross-Sectional] State is null, cannot process direction');
+        return;
+      }
+      
+      // Process current cross-sectional point with the direction
+      await this.processCurrentCrossSectionalPoint(direction);
+      
+      // Save state
+      this.saveState();
+      this.autoSaveCurrentImage();
+      
+      // 🔧 FIX: Check state again after processing
+      if (!this.crossSectionalState) {
+        console.warn('[Cross-Sectional] State became null during processing');
+        return;
+      }
+      
+      // Check if all annotations are processed
+      if (this.crossSectionalState.processedCount >= this.crossSectionalState.totalCount) {
+        console.log('[Cross-Sectional] All annotations processed, completing mode');
+        this.completeCrossSectionalMode();
+      } else {
+        // Continue with next annotation
+        console.log('[Cross-Sectional] Continuing to next annotation');
+        // The advance method will be called from processCurrentCrossSectionalPoint
+      }
+      
+    } catch (error) {
+      console.error('[Cross-Sectional] Failed to handle direction set:', error);
+      
+      // Show error to user but don't break the mode
+      if (window.PlantAnnotationTool?.showError) {
+        window.PlantAnnotationTool.showError('Cross-Sectional Error', `Failed to process direction: ${error.message}`);
+      }
+      
+      // Try to continue anyway by advancing to next point
+      try {
+        console.log('[Cross-Sectional] Attempting to continue despite error...');
+        // 🔧 FIX: Check if state exists before accessing
+        if (this.crossSectionalState) {
+          this.crossSectionalState.processedCount++;
+          await this.advanceCrossSectionalProgress();
+        } else {
+          console.warn('[Cross-Sectional] Cannot continue - state is null');
+        }
+      } catch (advanceError) {
+        console.error('[Cross-Sectional] Failed to advance after error:', advanceError);
+        // Exit cross-sectional mode if we can't continue
+        if (this.crossSectionalState) {
+          this.completeCrossSectionalMode();
+        } else {
+          console.warn('[Cross-Sectional] Cannot complete - state is null, forcing exit');
+          this.exitAutoDirectionMode();
+        }
       }
     }
   }
@@ -1718,10 +1848,10 @@ export class AnnotationTool {
   }
 
   /**
-   * 开始自动化方向选择模式（专门用于升级传统标注）
+   * 🔧 ENHANCED: 开始自动化方向选择模式（支持纵向和横向模式）
    */
-  startAutoDirectionMode() {
-    console.log('[调试] startAutoDirectionMode 被调用');
+  async startAutoDirectionMode() {
+    console.log('[调试] startAutoDirectionMode 被调用，当前模式:', this.autoDirectionMode);
 
     // 先清理之前的状态
     if (this.state.isDirectionSelectionMode || this.state.isAutoDirectionMode) {
@@ -1732,6 +1862,87 @@ export class AnnotationTool {
       this.state.isAutoDirectionMode = false;
     }
 
+    // Clear any existing cross-sectional state
+    this.crossSectionalState = null;
+    this.crossSectionalMap.clear();
+
+    try {
+      if (this.autoDirectionMode === 'cross-sectional') {
+        // 🔧 NEW: Cross-Sectional Mode - Process same order across all images
+        return await this.startCrossSectionalMode();
+      } else {
+        // 🔧 EXISTING: Longitudinal Mode - Complete all points in one image first
+        return this.startLongitudinalMode();
+      }
+    } catch (error) {
+      console.error('[Auto Direction] Failed to start auto direction mode:', error);
+      if (window.PlantAnnotationTool?.showError) {
+        window.PlantAnnotationTool.showError('Auto Direction Error', error.message);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * 🔧 NEW: Start Cross-Sectional Mode
+   */
+  async startCrossSectionalMode() {
+    console.log('[Cross-Sectional] Starting cross-sectional mode');
+    
+    try {
+      // Build cross-sectional map for all images
+      this.crossSectionalMap = await this.buildCrossSectionalMap();
+      
+      if (this.crossSectionalMap.size === 0) {
+        console.log('[Cross-Sectional] No directionless annotations found across all images');
+        if (window.PlantAnnotationTool?.showInfo) {
+          window.PlantAnnotationTool.showInfo('No Work Needed', 'No directionless annotations found across all images in current view angle.');
+        }
+        return false;
+      }
+      
+      // Initialize cross-sectional state
+      this.initializeCrossSectionalState();
+      
+      // Set auto direction mode flag
+      this.state.isAutoDirectionMode = true;
+      
+      // Update UI to reflect cross-sectional mode
+      this.updateAutoDirectionModeUI();
+      
+      // Start processing with first annotation
+      const currentPoint = this.getCurrentCrossSectionalPoint();
+      if (currentPoint) {
+        console.log(`[Cross-Sectional] Starting with annotation #${currentPoint.annotation.order} in ${currentPoint.imageName}`);
+        
+        // Switch to the first image with annotations to process
+        await this.switchToImageForCrossSectional(currentPoint.imageId);
+        
+        // Show cross-sectional progress UI
+        this.updateCrossSectionalProgressUI();
+        
+        if (window.PlantAnnotationTool?.showInfo) {
+          window.PlantAnnotationTool.showInfo('Cross-Sectional Mode', 
+            `Processing ${this.crossSectionalState.totalCount} annotations across ${this.crossSectionalState.availableOrders.length} order numbers. Click to set directions.`);
+        }
+        
+        return true;
+      } else {
+        throw new Error('No annotations to process in cross-sectional mode');
+      }
+      
+    } catch (error) {
+      console.error('[Cross-Sectional] Failed to start cross-sectional mode:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 🔧 EXISTING: Start Longitudinal Mode (original behavior)
+   */
+  startLongitudinalMode() {
+    console.log('[Longitudinal] Starting longitudinal mode');
+    
     // 找到所有需要设置方向的标注点（传统left/right标注点 + 无方向标注点）
     const needDirectionKeypoints = this.keypoints.filter(kp => {
       // 传统left/right标注点
@@ -1745,7 +1956,7 @@ export class AnnotationTool {
       return isLegacy || isNoDirection;
     });
 
-    console.log('[调试] 找到需要设置方向的标注点', needDirectionKeypoints.map(kp => ({
+    console.log('[Longitudinal] 找到需要设置方向的标注点', needDirectionKeypoints.map(kp => ({
       order: kp.order,
       direction: kp.direction,
       directionType: kp.directionType,
@@ -1753,10 +1964,10 @@ export class AnnotationTool {
     })));
 
     if (needDirectionKeypoints.length === 0) {
-      console.log('没有需要设置方向的标注点');
+      console.log('[Longitudinal] 没有需要设置方向的标注点');
       // 显示提示信息
-      if (window.showInfo) {
-        window.showInfo('无需设置', '当前图像没有需要设置方向的标注点');
+      if (window.PlantAnnotationTool?.showInfo) {
+        window.PlantAnnotationTool.showInfo('无需设置', '当前图像没有需要设置方向的标注点');
       }
       return false;
     }
@@ -1768,20 +1979,24 @@ export class AnnotationTool {
     this.state.autoDirectionKeypoints = needDirectionKeypoints;
     this.state.autoDirectionIndex = 0;
 
-    console.log('[调试] 设置自动模式状态', {
+    console.log('[Longitudinal] 设置自动模式状态', {
       isAutoDirectionMode: this.state.isAutoDirectionMode,
       autoDirectionKeypoints: this.state.autoDirectionKeypoints.length,
       autoDirectionIndex: this.state.autoDirectionIndex
     });
 
+    // Update UI to reflect longitudinal mode
+    this.updateAutoDirectionModeUI();
+
     // 选择第一个关键点并自动放大
     this.selectKeypointWithZoom(needDirectionKeypoints[0]);
 
-    console.log(`开始自动化方向设置模式，共 ${needDirectionKeypoints.length} 个标注点需要设置方向`);
+    console.log(`[Longitudinal] 开始自动化方向设置模式，共 ${needDirectionKeypoints.length} 个标注点需要设置方向`);
 
     // 显示提示信息
-    if (window.showInfo) {
-      window.showInfo('方向设置模式', `开始为 ${needDirectionKeypoints.length} 个标注点设置方向。移动鼠标选择方向，点击确认，右键暂停。`);
+    if (window.PlantAnnotationTool?.showInfo) {
+      window.PlantAnnotationTool.showInfo('Longitudinal Mode', 
+        `Setting directions for ${needDirectionKeypoints.length} annotations in current image. Move mouse to select direction, click to confirm, right-click to pause.`);
     }
 
     return true;
@@ -2014,12 +2229,538 @@ export class AnnotationTool {
   }
 
   /**
+   * 🔧 NEW: Set Auto Direction Mode (Longitudinal vs Cross-Sectional)
+   * @param {string} mode - 'longitudinal' or 'cross-sectional'
+   */
+  setAutoDirectionMode(mode) {
+    if (!['longitudinal', 'cross-sectional'].includes(mode)) {
+      throw new Error('Invalid auto direction mode: ' + mode);
+    }
+    
+    this.autoDirectionMode = mode;
+    console.log(`Auto Direction mode set to: ${mode}`);
+    
+    // Update UI to reflect mode change
+    this.updateAutoDirectionModeUI();
+  }
+
+  /**
+   * 🔧 NEW: Update UI to reflect current auto direction mode
+   */
+  updateAutoDirectionModeUI() {
+    const autoDirectionBtn = document.getElementById('auto-direction-btn');
+    const modeSelector = document.getElementById('auto-direction-mode-selector');
+    
+    if (autoDirectionBtn && this.autoDirectionMode) {
+      // Remove existing mode classes
+      autoDirectionBtn.classList.remove('longitudinal-mode', 'cross-sectional-mode');
+      
+      // Add current mode class
+      autoDirectionBtn.classList.add(`${this.autoDirectionMode}-mode`);
+      
+      // Update button text if needed
+      if (this.state.isAutoDirectionMode) {
+        const modeText = this.autoDirectionMode === 'cross-sectional' ? 'Exit Vertical Mode' : 'Exit Horizontal Mode';
+        autoDirectionBtn.textContent = modeText;
+      } else {
+        autoDirectionBtn.textContent = 'Auto Direction';
+      }
+    }
+    
+    // 🔧 FIX: Only update mode selector if we have a valid mode
+    // Don't override UI selector with null/undefined values
+    if (modeSelector && this.autoDirectionMode) {
+      modeSelector.value = this.autoDirectionMode;
+      console.log('[调试] 更新UI选择器为:', this.autoDirectionMode);
+    }
+  }
+
+  /**
+   * 🔧 NEW: Build Cross-Sectional Map for all images
+   * @returns {Promise<Map>} Map of order numbers to array of {imageId, annotation} pairs
+   */
+  async buildCrossSectionalMap() {
+    const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+    const appState = window.PlantAnnotationTool?.appState;
+    
+    if (!plantDataManager || !appState?.currentPlant) {
+      throw new Error('Plant data manager or current plant not available');
+    }
+    
+    const crossSectionalMap = new Map();
+    
+    try {
+      // Get all images for current plant and view angle
+      const allImages = await plantDataManager.getPlantImages(
+        appState.currentPlant.id,
+        appState.currentPlant.selectedViewAngle
+      );
+      
+      if (!allImages || allImages.length === 0) {
+        throw new Error('No images found for current plant and view angle');
+      }
+      
+      console.log(`[Cross-Sectional] Analyzing ${allImages.length} images for directionless annotations`);
+      
+      // Analyze each image for directionless annotations
+      for (const image of allImages) {
+        try {
+          const annotations = await plantDataManager.getImageAnnotations(image.id);
+          
+          if (annotations && annotations.length > 0) {
+            // Find directionless annotations
+            const directionlessAnnotations = annotations.filter(ann => 
+              !ann.direction || ann.direction === 'none' || ann.direction === null
+            );
+            
+            // Group by order number
+            for (const annotation of directionlessAnnotations) {
+              const order = annotation.order || 1;
+              
+              if (!crossSectionalMap.has(order)) {
+                crossSectionalMap.set(order, []);
+              }
+              
+              crossSectionalMap.get(order).push({
+                imageId: image.id,
+                imageName: image.name,
+                annotation: annotation
+              });
+            }
+          }
+        } catch (error) {
+          console.warn(`[Cross-Sectional] Failed to load annotations for image ${image.id}:`, error);
+        }
+      }
+      
+      // Sort each order group by image name for consistent processing order
+      for (const [order, imageAnnotationPairs] of crossSectionalMap) {
+        imageAnnotationPairs.sort((a, b) => a.imageName.localeCompare(b.imageName));
+      }
+      
+      console.log(`[Cross-Sectional] Built map with ${crossSectionalMap.size} order numbers`, 
+        Array.from(crossSectionalMap.keys()).sort((a, b) => a - b));
+      
+      return crossSectionalMap;
+      
+    } catch (error) {
+      console.error('[Cross-Sectional] Failed to build cross-sectional map:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 🔧 NEW: Get all available order numbers across all images
+   * @returns {Array<number>} Sorted array of order numbers
+   */
+  getAvailableOrderNumbers() {
+    if (!this.crossSectionalMap) {
+      return [];
+    }
+    
+    return Array.from(this.crossSectionalMap.keys()).sort((a, b) => a - b);
+  }
+
+  /**
+   * 🔧 NEW: Get all images that have annotations with specific order
+   * @param {number} order - Order number to search for
+   * @returns {Array} Array of {imageId, imageName, annotation} objects
+   */
+  getImagesWithOrder(order) {
+    if (!this.crossSectionalMap || !this.crossSectionalMap.has(order)) {
+      return [];
+    }
+    
+    return this.crossSectionalMap.get(order);
+  }
+
+  /**
+   * 🔧 NEW: Initialize Cross-Sectional State
+   */
+  initializeCrossSectionalState() {
+    const availableOrders = this.getAvailableOrderNumbers();
+    
+    if (availableOrders.length === 0) {
+      throw new Error('No directionless annotations found across all images');
+    }
+    
+    this.crossSectionalState = {
+      currentOrder: availableOrders[0],
+      currentImageIndex: 0,
+      processedCount: 0,
+      totalCount: this.getAllCrossSectionalPoints().length,
+      availableOrders: availableOrders,
+      startTime: Date.now()
+    };
+    
+    console.log(`[Cross-Sectional] Initialized state:`, this.crossSectionalState);
+  }
+
+  /**
+   * 🔧 NEW: Get all cross-sectional points for progress tracking
+   * @returns {Array} All directionless annotation points across all images
+   */
+  getAllCrossSectionalPoints() {
+    const allPoints = [];
+    
+    if (!this.crossSectionalMap) {
+      return allPoints;
+    }
+    
+    for (const imageAnnotationPairs of this.crossSectionalMap.values()) {
+      allPoints.push(...imageAnnotationPairs);
+    }
+    
+    return allPoints;
+  }
+
+  /**
+   * 🔧 NEW: Get current cross-sectional annotation to process
+   * @returns {Object|null} Current annotation data or null if done
+   */
+  getCurrentCrossSectionalPoint() {
+    if (!this.crossSectionalState) {
+      return null;
+    }
+    
+    const { currentOrder, currentImageIndex } = this.crossSectionalState;
+    const imagesWithCurrentOrder = this.getImagesWithOrder(currentOrder);
+    
+    if (currentImageIndex >= imagesWithCurrentOrder.length) {
+      return null; // No more images for current order
+    }
+    
+    return imagesWithCurrentOrder[currentImageIndex];
+  }
+
+  /**
+   * 🔧 NEW: Process current cross-sectional point with direction
+   * @param {string|number} direction - Direction value ('left', 'right', or angle in degrees)
+   */
+  async processCurrentCrossSectionalPoint(direction) {
+    // 🔧 FIX: Check if state exists first
+    if (!this.crossSectionalState) {
+      console.warn('[Cross-Sectional] Cannot process point - state is null');
+      return;
+    }
+    
+    const currentPoint = this.getCurrentCrossSectionalPoint();
+    
+    if (!currentPoint) {
+      console.warn('[Cross-Sectional] No current point to process');
+      return;
+    }
+    
+    try {
+      // Update the annotation with direction
+      currentPoint.annotation.direction = direction;
+      
+      // Save to storage
+      const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+      if (plantDataManager) {
+        const allAnnotations = await plantDataManager.getImageAnnotations(currentPoint.imageId);
+        await plantDataManager.saveImageAnnotations(currentPoint.imageId, allAnnotations);
+      }
+      
+      // 🔧 FIX: Check state again before updating count
+      if (!this.crossSectionalState) {
+        console.warn('[Cross-Sectional] State became null during processing');
+        return;
+      }
+      
+      // Update progress
+      this.crossSectionalState.processedCount++;
+      
+      console.log(`[Cross-Sectional] Processed annotation #${currentPoint.annotation.order} in ${currentPoint.imageName} with direction: ${direction}`);
+      
+      // Move to next point
+      await this.advanceCrossSectionalProgress();
+      
+    } catch (error) {
+      console.error('[Cross-Sectional] Failed to process point:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 🔧 NEW: Advance cross-sectional processing to next point
+   */
+  async advanceCrossSectionalProgress() {
+    if (!this.crossSectionalState) {
+      return;
+    }
+    
+    const { currentOrder, currentImageIndex, availableOrders } = this.crossSectionalState;
+    const imagesWithCurrentOrder = this.getImagesWithOrder(currentOrder);
+    
+    // Check if there are more images with current order
+    if (currentImageIndex + 1 < imagesWithCurrentOrder.length) {
+      // 🔧 FIX: Check state still exists before updating
+      if (!this.crossSectionalState) {
+        console.warn('[Cross-Sectional] State became null during advance, cannot continue');
+        return;
+      }
+      
+      // Move to next image with same order
+      this.crossSectionalState.currentImageIndex++;
+      const nextImageData = imagesWithCurrentOrder[this.crossSectionalState.currentImageIndex];
+      
+      console.log(`[Cross-Sectional] Moving to next image for order ${currentOrder}: ${nextImageData.imageName}`);
+      
+      // Switch to next image
+      await this.switchToImageForCrossSectional(nextImageData.imageId);
+      
+    } else {
+      // Current order complete, move to next order
+      const currentOrderIndex = availableOrders.indexOf(currentOrder);
+      
+      if (currentOrderIndex + 1 < availableOrders.length) {
+        // 🔧 FIX: Check state still exists before updating
+        if (!this.crossSectionalState) {
+          console.warn('[Cross-Sectional] State became null during advance, cannot continue');
+          return;
+        }
+        
+        // Move to next order
+        const nextOrder = availableOrders[currentOrderIndex + 1];
+        this.crossSectionalState.currentOrder = nextOrder;
+        this.crossSectionalState.currentImageIndex = 0;
+        
+        const nextOrderImages = this.getImagesWithOrder(nextOrder);
+        if (nextOrderImages.length > 0) {
+          console.log(`[Cross-Sectional] Moving to next order ${nextOrder}, starting with: ${nextOrderImages[0].imageName}`);
+          
+          // Switch to first image with next order
+          await this.switchToImageForCrossSectional(nextOrderImages[0].imageId);
+        }
+      } else {
+        // All orders processed - complete cross-sectional mode
+        console.log('[Cross-Sectional] All orders processed, completing mode');
+        this.completeCrossSectionalMode();
+      }
+    }
+    
+    // Update progress UI
+    this.updateCrossSectionalProgressUI();
+  }
+
+  /**
+   * 🔧 NEW: Switch to specific image for cross-sectional processing
+   * @param {string} targetImageId - Image ID to switch to
+   */
+  async switchToImageForCrossSectional(targetImageId) {
+    try {
+      console.log(`[Cross-Sectional] Starting image switch to: ${targetImageId}`);
+      
+      const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+      const appState = window.PlantAnnotationTool?.appState;
+      
+      if (!plantDataManager || !appState?.currentPlant) {
+        throw new Error('Plant data manager or current plant not available');
+      }
+      
+      // Get image data
+      const allImages = await plantDataManager.getPlantImages(
+        appState.currentPlant.id,
+        appState.currentPlant.selectedViewAngle
+      );
+      
+      const targetImage = allImages.find(img => img.id === targetImageId);
+      if (!targetImage) {
+        throw new Error(`Image not found: ${targetImageId}`);
+      }
+      
+      console.log(`[Cross-Sectional] Switching to image: ${targetImage.name}`);
+      
+      // Use global image selection function
+      if (window.handleImageSelect) {
+        console.log(`[Cross-Sectional] Calling handleImageSelect...`);
+        await window.handleImageSelect(targetImage, true);
+        console.log(`[Cross-Sectional] handleImageSelect completed successfully`);
+      } else {
+        throw new Error('Global image selection function not available');
+      }
+      
+      // Wait for image to load and annotations to be ready
+      console.log(`[Cross-Sectional] Waiting for image to load...`);
+      await this.waitForImageLoad();
+      console.log(`[Cross-Sectional] Image loaded successfully`);
+      
+      // Select the annotation for current processing
+      const currentPoint = this.getCurrentCrossSectionalPoint();
+      if (currentPoint && currentPoint.annotation) {
+        console.log(`[Cross-Sectional] Looking for annotation #${currentPoint.annotation.order} in loaded keypoints`);
+        
+        // Find the annotation in the loaded keypoints
+        const loadedAnnotation = this.keypoints.find(kp => 
+          kp.order === currentPoint.annotation.order
+        );
+        
+        if (loadedAnnotation) {
+          console.log(`[Cross-Sectional] Found annotation #${loadedAnnotation.order}, selecting it`);
+          this.state.selectedKeypoint = loadedAnnotation;
+          this.state.isDirectionSelectionMode = true;
+          
+          // Center view on the annotation
+          this.selectKeypointWithZoom(loadedAnnotation);
+        } else {
+          console.warn(`[Cross-Sectional] Could not find annotation #${currentPoint.annotation.order} in loaded keypoints`);
+        }
+      } else {
+        console.warn(`[Cross-Sectional] No current point available after image switch`);
+      }
+      
+    } catch (error) {
+      console.error('[Cross-Sectional] Failed to switch image:', error);
+      // Don't re-throw the error, continue with error handling
+      if (window.PlantAnnotationTool?.showError) {
+        window.PlantAnnotationTool.showError('Image Switch Failed', error.message);
+      }
+    }
+  }
+
+  /**
+   * 🔧 NEW: Wait for image load to complete
+   */
+  async waitForImageLoad(maxWaitTime = 5000) {
+    const startTime = Date.now();
+    
+    console.log(`[Cross-Sectional] Waiting for image load... (max ${maxWaitTime}ms)`);
+    
+    while (!this.imageLoaded && (Date.now() - startTime) < maxWaitTime) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (!this.imageLoaded) {
+      console.warn(`[Cross-Sectional] Image load timeout after ${maxWaitTime}ms`);
+      // Don't throw error, continue anyway
+      return false;
+    }
+    
+    console.log(`[Cross-Sectional] Image loaded in ${Date.now() - startTime}ms`);
+    return true;
+  }
+
+  /**
+   * 🔧 NEW: Complete cross-sectional mode
+   */
+  completeCrossSectionalMode() {
+    // 🔧 FIX: Check if state exists before accessing
+    if (!this.crossSectionalState) {
+      console.warn('[Cross-Sectional] Cannot complete - state is null');
+      // Just exit auto direction mode if state is already gone
+      this.exitAutoDirectionMode();
+      return;
+    }
+    
+    const duration = Date.now() - this.crossSectionalState.startTime;
+    const processedCount = this.crossSectionalState.processedCount;
+    
+    console.log(`[Cross-Sectional] Mode completed! Processed ${processedCount} annotations in ${duration}ms`);
+    
+    // Show completion message
+    if (window.updateProgressInfo) {
+      window.updateProgressInfo(`Cross-Sectional mode completed! Processed ${processedCount} annotations across all images.`);
+    }
+    
+    // Clean up state
+    this.crossSectionalState = null;
+    this.crossSectionalMap.clear();
+    
+    // Exit auto direction mode
+    this.exitAutoDirectionMode();
+  }
+
+  /**
+   * 🔧 NEW: Update cross-sectional progress UI
+   */
+  updateCrossSectionalProgressUI() {
+    const progressIndicator = document.getElementById('auto-direction-progress');
+    const progressCurrent = document.getElementById('progress-current');
+    const progressTotal = document.getElementById('progress-total');
+    const progressFill = document.getElementById('auto-direction-progress-fill');
+    const progressModeInfo = document.getElementById('progress-mode-info');
+    
+    if (!this.crossSectionalState) {
+      if (progressIndicator) {
+        progressIndicator.style.display = 'none';
+      }
+      return;
+    }
+    
+    const { processedCount, totalCount, currentOrder, availableOrders } = this.crossSectionalState;
+    const progressPercentage = totalCount > 0 ? (processedCount / totalCount) * 100 : 0;
+    
+    if (progressIndicator) {
+      progressIndicator.style.display = 'block';
+    }
+    
+    if (progressCurrent) {
+      progressCurrent.textContent = processedCount;
+    }
+    
+    if (progressTotal) {
+      progressTotal.textContent = totalCount;
+    }
+    
+    if (progressFill) {
+      progressFill.style.width = `${progressPercentage}%`;
+      progressFill.className = 'progress-fill cross-sectional-indicator';
+    }
+    
+    if (progressModeInfo) {
+      const currentOrderIndex = availableOrders.indexOf(currentOrder);
+      progressModeInfo.textContent = `Order ${currentOrder} (${currentOrderIndex + 1}/${availableOrders.length})`;
+    }
+  }
+
+  /**
+   * 🔧 NEW: Get Auto Direction Progress (works for both modes)
+   * @returns {Object} Progress information
+   */
+  getAutoDirectionProgress() {
+    if (this.autoDirectionMode === 'cross-sectional' && this.crossSectionalState) {
+      const { processedCount, totalCount, currentOrder, availableOrders } = this.crossSectionalState;
+      
+      return {
+        total: totalCount,
+        completed: processedCount,
+        percentage: totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0,
+        currentOrder: currentOrder,
+        totalOrders: availableOrders.length,
+        mode: 'cross-sectional'
+      };
+    } else if (this.autoDirectionMode === 'longitudinal' && this.state.isAutoDirectionMode) {
+      const total = this.state.autoDirectionKeypoints.length;
+      const completed = this.state.autoDirectionIndex;
+      
+      return {
+        total: total,
+        completed: completed,
+        percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
+        mode: 'longitudinal'
+      };
+    }
+    
+    return {
+      total: 0,
+      completed: 0,
+      percentage: 0,
+      mode: this.autoDirectionMode
+    };
+  }
+
+  /**
    * 退出自动化方向选择模式
    */
   exitAutoDirectionMode() {
     console.log('[调试] exitAutoDirectionMode 被调用', {
       stackTrace: new Error().stack
     });
+
+    // 🔧 FIX: Store the user's mode preference before resetting
+    const userModePreference = this.autoDirectionMode;
+    console.log('[调试] 保存用户模式偏好:', userModePreference);
 
     this.state.isAutoDirectionMode = false;
     this.state.autoDirectionKeypoints = [];
@@ -2030,10 +2771,34 @@ export class AnnotationTool {
     this.state.isDirectionSelectionMode = false;
     this.state.directionSelectionPoint = null;
 
+    // 🔧 FIX: Only reset cross-sectional state if we're not in the middle of completion
+    // This prevents null reference errors during the completion process
+    if (this.autoDirectionMode === 'cross-sectional' && this.crossSectionalState) {
+      console.log('[调试] 延迟清理 cross-sectional 状态，让完成流程处理');
+      // Don't reset cross-sectional state here - let completeCrossSectionalMode handle it
+      // But preserve the user's mode preference
+      this.autoDirectionMode = userModePreference;
+    } else {
+      // For non-cross-sectional modes or if state is already null, reset state but preserve mode preference
+      this.crossSectionalState = null;
+      // 🔧 FIX: Don't reset autoDirectionMode to null - preserve user's choice
+      this.autoDirectionMode = userModePreference;
+    }
+
     this.restoreNormalPreview();
     this.render();
 
-    console.log('Exited auto direction mode');
+    // 🔧 FIX: Reset auto direction button state when exiting auto direction mode
+    this.resetAutoDirectionButton();
+
+    // 🔧 FIX: Preserve the mode selector UI state
+    const modeSelector = document.getElementById('auto-direction-mode-selector');
+    if (modeSelector && userModePreference) {
+      modeSelector.value = userModePreference;
+      console.log('[调试] 恢复UI选择器状态:', userModePreference);
+    }
+
+    console.log('Exited auto direction mode, preserved mode preference:', userModePreference);
   }
 
   /**
@@ -2279,8 +3044,14 @@ export class AnnotationTool {
     // 同步分支点预览
     this.syncBranchPointPreview();
 
-    // 自动切换到预期位置（标注点创建后）
-    this.moveToNextExpectedPosition();
+    // 🔧 FIX: Set flag to indicate we just created a new point
+    this.justCreatedNewPoint = true;
+
+    // 🔧 FIX: Only move to expected position if auto-move is enabled
+    if (this.state.autoMoveToExpectedPosition) {
+      this.moveToNextExpectedPosition();
+      this.justCreatedNewPoint = false; // Reset flag after moving
+    }
 
     const typeDesc = customTypeId ? `custom(${customTypeId})` : 'regular';
     const directionDesc = typeof normalizedDirection === 'number' ? `${normalizedDirection}°` : normalizedDirection;
@@ -4659,14 +5430,36 @@ export class AnnotationTool {
     // 中断多方向设置模式
     this.interruptMultiDirectionSetting(reason);
     
-    // 中断常规方向选择模式
-    if (this.state.isDirectionSelectionMode) {
-      this.cancelDirectionSelection(true);
+    // 🔧 FIX: Handle auto direction mode preservation BEFORE calling cancelDirectionSelection
+    // Cross-sectional mode needs to persist across image switches
+    if (this.state.isAutoDirectionMode) {
+      if (this.autoDirectionMode === 'cross-sectional' && reason === 'image_switch') {
+        // For cross-sectional mode during image switch, only clear current selection
+        // but preserve the overall cross-sectional state and progress
+        console.log('[Cross-Sectional] Preserving cross-sectional mode during image switch');
+        this.state.selectedKeypoint = null;
+        this.state.isDirectionSelectionMode = false;
+        this.state.directionSelectionPoint = null;
+        // Return early to avoid calling cancelDirectionSelection with forceExit
+        return;
+      } else if (this.autoDirectionMode === 'cross-sectional' && reason === 'custom_annotation_mode') {
+        // For cross-sectional mode when entering custom annotation, only pause
+        console.log('[Cross-Sectional] Pausing cross-sectional mode for custom annotation');
+        this.state.selectedKeypoint = null;
+        this.state.isDirectionSelectionMode = false;
+        this.state.directionSelectionPoint = null;
+        // Return early to avoid calling cancelDirectionSelection with forceExit
+        return;
+      } else {
+        // For other cases or longitudinal mode, exit completely
+        // This includes plant_switch which should exit cross-sectional mode
+        this.exitAutoDirectionMode();
+      }
     }
     
-    // 中断自动化方向模式
-    if (this.state.isAutoDirectionMode) {
-      this.exitAutoDirectionMode();
+    // 中断常规方向选择模式 (only if we didn't return early above)
+    if (this.state.isDirectionSelectionMode) {
+      this.cancelDirectionSelection(true);
     }
   }
 

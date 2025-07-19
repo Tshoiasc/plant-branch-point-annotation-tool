@@ -14,6 +14,9 @@
 
   <!-- Main stylesheet -->
   <link rel="stylesheet" href="/src/styles/main.css" />
+  
+  <!-- Enhanced Auto Direction styles -->
+  <link rel="stylesheet" href="/src/styles/auto-direction-enhanced.css" />
 </head>
 <body>
   <!-- 全屏加载指示器 -->
@@ -181,7 +184,22 @@
                   <button id="fit-screen-btn" class="btn btn-small" title="Fit to screen">Fit Screen</button>
                 </div>
                 <div class="direction-controls-section" style="margin-top: 10px;">
-                  <button id="auto-direction-btn" class="btn btn-small btn-special" title="Start automated direction selection">Auto Direction</button>
+                  <div class="auto-direction-controls" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <button id="auto-direction-btn" class="btn btn-small btn-special" title="Start automated direction selection">Auto Direction</button>
+                    <select id="auto-direction-mode-selector" class="mode-selector" title="Select annotation mode">
+                      <option value="longitudinal">Horizontal (Image by Image) - Complete one image fully, then next image</option>
+                      <option value="cross-sectional">Vertical (Order by Order) - Complete order #1 across all images, then order #2</option>
+                    </select>
+                  </div>
+                  <div id="auto-direction-progress" class="progress-indicator" style="display: none;">
+                    <div class="progress-text">
+                      <span id="progress-current">0</span>/<span id="progress-total">0</span> 
+                      <span id="progress-mode-info"></span>
+                    </div>
+                    <div class="progress-bar">
+                      <div class="progress-fill" id="auto-direction-progress-fill"></div>
+                    </div>
+                  </div>
                 </div>
                 <div class="zoom-lock-section" style="margin-top: 10px;">
                   <label class="checkbox-label">
