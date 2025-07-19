@@ -529,6 +529,7 @@ export class BranchPointPreviewManager {
       
       // 加载图像
       const img = new Image();
+      img.crossOrigin = 'anonymous'; // 🔧 FIX: Prevent canvas taint issues
       await new Promise((resolve, reject) => {
         img.onload = () => {
           console.log('图像加载成功:', img.width, 'x', img.height);
@@ -1043,6 +1044,7 @@ export class BranchPointPreviewManager {
       
       // 加载图像
       const img = new Image();
+      img.crossOrigin = 'anonymous'; // 🔧 FIX: Prevent canvas taint issues
       await new Promise((resolve, reject) => {
         img.onload = () => resolve();
         img.onerror = () => reject(new Error('图像加载失败'));

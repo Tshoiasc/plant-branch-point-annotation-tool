@@ -104,6 +104,13 @@ export class AnnotationTool {
       startPosition: null
     };
     
+    // 🔧 NEW: 图像切换锁定机制 - 防止快速切换时的数据混乱
+    this.imageSwitchLock = {
+      isLocked: false,
+      currentLoadingImageId: null,
+      lockStartTime: null
+    };
+    
     // 绑定事件
     this.bindEvents();
     
@@ -282,13 +289,16 @@ export class AnnotationTool {
   }
 
   /**
-   * 加载图像
+   * 🔧 ENHANCED: 加载图像（带图像切换锁定机制）
    * @param {Object} imageData - 图像数据
    * @param {boolean} preserveView - 是否保持当前视图状态（缩放和位置）
    */
   async loadImage(imageData, preserveView = false) {
     try {
       console.log('Loading image:', imageData.name);
+      
+      // 🔧 NEW: 设置图像切换锁定，防止auto-save在切换过程中执行
+      this.setImageSwitchLock(true, imageData.id);
       
       // 🔧 NEW: 图像切换时中断所有方向相关模式
       this.interruptAllDirectionModes('image_switch');
@@ -298,12 +308,16 @@ export class AnnotationTool {
       
       // 检查plantDataManager是否可用
       if (!window.PlantAnnotationTool || !window.PlantAnnotationTool.plantDataManager) {
+        // 🔧 FIX: 出错时解锁
+        this.setImageSwitchLock(false);
         throw new Error('PlantDataManager未初始化，请刷新页面重试');
       }
       
       const plantDataManager = window.PlantAnnotationTool.plantDataManager;
       
       if (!plantDataManager.fileSystemManager) {
+        // 🔧 FIX: 出错时解锁
+        this.setImageSwitchLock(false);
         throw new Error('FileSystemManager未初始化，请刷新页面重试');
       }
       
@@ -312,6 +326,7 @@ export class AnnotationTool {
       
       // 创建图像元素
       this.imageElement = new Image();
+      this.imageElement.crossOrigin = 'anonymous'; // 🔧 FIX: Allow canvas access for SIFT matching
       
       return new Promise((resolve, reject) => {
         this.imageElement.onload = () => {
@@ -333,10 +348,15 @@ export class AnnotationTool {
           // 渲染
           this.render();
 
+          // 🔧 NEW: 图像加载完成后解锁，允许auto-save
+          this.setImageSwitchLock(false);
+
           resolve();
         };
         
         this.imageElement.onerror = () => {
+          // 🔧 FIX: 出错时解锁
+          this.setImageSwitchLock(false);
           reject(new Error('Failed to load image'));
         };
         
@@ -345,6 +365,8 @@ export class AnnotationTool {
       
     } catch (error) {
       console.error('Error loading image:', error);
+      // 🔧 FIX: 出错时解锁
+      this.setImageSwitchLock(false);
       throw error;
     }
   }
@@ -481,8 +503,13 @@ export class AnnotationTool {
     // 恢复Canvas状态
     this.ctx.restore();
     
-    // 绘制标注点（在变换后绘制，保持固定大小）
-    this.renderKeypoints();
+    // 🔧 NEW: 如果在校准预览模式，渲染校准可视化
+    if (this.calibrationPreviewState?.isActive) {
+      this.renderCalibrationPreview();
+    } else {
+      // 正常模式：绘制标注点
+      this.renderKeypoints();
+    }
     
     // 绘制自定义标注
     this.renderCustomAnnotations();
@@ -893,7 +920,7 @@ export class AnnotationTool {
       this.ctx.fillStyle = deltaX < 0 ? this.options.keypointLeftColor : this.options.keypointRightColor;
       this.ctx.font = 'bold 14px Inter, sans-serif';
       this.ctx.textAlign = 'center';
-      this.ctx.fillText(deltaX < 0 ? '← 左侧' : '右侧 →', midX, midY);
+      this.ctx.fillText(deltaX < 0 ? '← Left' : 'Right →', midX, midY);
     }
   }
 
@@ -2909,7 +2936,7 @@ export class AnnotationTool {
     const tooltip = document.createElement('div');
     tooltip.className = 'keypoint-tooltip';
     
-    const directionText = direction === 'left' ? '左侧' : '右侧';
+    const directionText = direction === 'left' ? 'Left' : 'Right';
     const coordinateText = `(${Math.round(keypoint.x)}, ${Math.round(keypoint.y)})`;
     
     tooltip.innerHTML = `
@@ -3056,7 +3083,40 @@ export class AnnotationTool {
   }
 
   /**
-   * 自动保存当前图像
+   * 🔧 NEW: 设置图像切换锁定状态
+   * @param {boolean} isLocked - 是否锁定
+   * @param {string} imageId - 正在加载的图像ID
+   */
+  setImageSwitchLock(isLocked, imageId = null) {
+    this.imageSwitchLock.isLocked = isLocked;
+    this.imageSwitchLock.currentLoadingImageId = imageId;
+    this.imageSwitchLock.lockStartTime = isLocked ? Date.now() : null;
+    
+    console.log(`[图像切换锁] ${isLocked ? '锁定' : '解锁'} - 图像: ${imageId || 'none'}`);
+  }
+  
+  /**
+   * 🔧 NEW: 验证当前图像一致性
+   * @param {string} expectedImageId - 期望的图像ID
+   * @returns {boolean} 是否一致
+   */
+  validateCurrentImageConsistency(expectedImageId) {
+    const appState = window.PlantAnnotationTool?.appState;
+    if (!appState?.currentImage?.id) {
+      console.warn('[一致性检查] 当前图像状态无效');
+      return false;
+    }
+    
+    const isConsistent = appState.currentImage.id === expectedImageId;
+    if (!isConsistent) {
+      console.warn(`[一致性检查] 不一致 - 期望: ${expectedImageId}, 实际: ${appState.currentImage.id}`);
+    }
+    
+    return isConsistent;
+  }
+  
+  /**
+   * 🔧 ENHANCED: 自动保存当前图像（带锁定机制）
    */
   async autoSaveCurrentImage() {
     try {
@@ -3068,29 +3128,50 @@ export class AnnotationTool {
         return;
       }
       
+      // 🔧 NEW: 检查图像切换锁定状态
+      if (this.imageSwitchLock.isLocked) {
+        console.warn(`[自动保存] 跳过：图像切换进行中 (${this.imageSwitchLock.currentLoadingImageId})`);
+        return;
+      }
+      
       // 🔧 FIX: 检查 currentImage 的有效性，防止 null 引用错误
       if (!appState.currentImage || !appState.currentImage.id) {
         console.warn('自动保存跳过：当前图像信息无效');
         return;
       }
       
+      // 🔧 NEW: 记录当前图像ID，用于一致性验证
+      const currentImageId = appState.currentImage.id;
+      
       // 获取当前标注数据
       const annotationData = this.getAnnotationData();
       
+      // 🔧 NEW: 在保存前再次验证图像一致性
+      if (!this.validateCurrentImageConsistency(currentImageId)) {
+        console.warn(`[自动保存] 跳过：图像状态在保存前发生变化 (${currentImageId})`);
+        return;
+      }
+      
       // 保存到当前图像（即使没有标注点也要保存，表示清空状态）
       await plantDataManager.saveImageAnnotations(
-        appState.currentImage.id,
+        currentImageId,
         annotationData.keypoints
       );
       
-      console.log(`自动保存完成：${annotationData.keypoints.length} 个标注点已保存到图像 ${appState.currentImage.id}`);
+      // 🔧 NEW: 在保存后验证图像状态仍然一致
+      if (!this.validateCurrentImageConsistency(currentImageId)) {
+        console.warn(`[自动保存] 警告：图像状态在保存后发生变化，数据可能已保存到错误图像 (${currentImageId})`);
+        return;
+      }
+      
+      console.log(`自动保存完成：${annotationData.keypoints.length} 个标注点已保存到图像 ${currentImageId}`);
       
       // 🔧 FIX: 自动保存后立即刷新缩略图状态（通过全局函数访问）
       try {
         // 尝试通过window对象访问全局函数
         const refreshFunction = window.refreshThumbnailAnnotationStatus;
         if (typeof refreshFunction === 'function') {
-          await refreshFunction(appState.currentImage.id);
+          await refreshFunction(currentImageId);
           console.log('自动保存后缩略图状态已刷新');
         } else {
           console.warn('refreshThumbnailAnnotationStatus 函数未找到，跳过缩略图刷新');
@@ -3279,11 +3360,11 @@ export class AnnotationTool {
     } else if (direction === 'left') {
       // 左侧：180度
       angleDegrees = 180;
-      directionText = '左侧 (180°)';
+      directionText = 'Left (180°)';
     } else if (direction === 'right') {
       // 右侧：0度
       angleDegrees = 0;
-      directionText = '右侧 (0°)';
+      directionText = 'Right (0°)';
     } else {
       return; // 未知方向类型
     }
@@ -4933,5 +5014,772 @@ export class AnnotationTool {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top
     };
+  }
+
+  /**
+   * 🔧 NEW: SIFT匹配功能 - 基于上一帧调整当前帧标注
+   */
+  async performSiftMatching() {
+    console.log('[SIFT] 开始执行SIFT匹配');
+    
+    try {
+      // 验证前置条件
+      const validation = await this.validateMatchingPreconditions();
+      if (!validation.isValid) {
+        console.error('[SIFT] 前置条件验证失败:', validation.errors);
+        this.showSiftError('SIFT匹配前置条件不满足', validation.errors.join('\n'));
+        return;
+      }
+
+      // 获取当前和上一帧的标注数据
+      const currentAnnotations = [...this.keypoints];
+      const previousAnnotations = await this.getPreviousFrameAnnotations();
+      
+      if (!previousAnnotations || previousAnnotations.length === 0) {
+        this.showSiftError('无法获取上一帧标注数据', '请确保上一帧存在标注点');
+        return;
+      }
+
+      // 获取图像数据
+      const currentImageData = this.getCurrentImageData();
+      const previousImageData = await this.getPreviousImageData();
+
+      // 执行SIFT匹配
+      const { SiftMatcher } = await import('./SiftMatcher.js');
+      const siftMatcher = new SiftMatcher();
+      
+      const calibratedAnnotations = await siftMatcher.calibrateAnnotations(
+        previousAnnotations,
+        currentAnnotations,
+        previousImageData,
+        currentImageData
+      );
+
+      // 计算匹配质量
+      const quality = siftMatcher.calculateMatchingQuality(calibratedAnnotations);
+      
+      console.log('[SIFT] 匹配完成:', {
+        原始标注: currentAnnotations.length,
+        校准标注: calibratedAnnotations.length,
+        平均置信度: `${(quality.averageConfidence * 100).toFixed(1)}%`,
+        平均偏移: `${quality.averageOffset.toFixed(2)}px`,
+        成功匹配: quality.successfulMatches
+      });
+
+      // 显示确认对话框
+      this.showCalibrationPreview(currentAnnotations, calibratedAnnotations, quality);
+
+    } catch (error) {
+      console.error('[SIFT] 匹配过程出错:', error);
+      this.showSiftError('SIFT匹配失败', error.message);
+    }
+  }
+
+  /**
+   * 🔧 NEW: 验证SIFT匹配前置条件
+   */
+  async validateMatchingPreconditions() {
+    const errors = [];
+    
+    // 检查当前图像
+    if (!this.currentImage || !this.imageElement) {
+      errors.push('当前图像未加载');
+    }
+    
+    // 检查当前标注
+    if (!this.keypoints || this.keypoints.length === 0) {
+      errors.push('当前图像没有标注点');
+    }
+    
+    // 检查是否有上一帧
+    if (!(await this.hasPreviousFrame())) {
+      errors.push('没有上一帧图像可用作参考');
+    }
+    
+    return {
+      hasCurrentImage: !!this.currentImage,
+      hasPreviousImage: await this.hasPreviousFrame(),
+      hasCurrentAnnotations: this.keypoints && this.keypoints.length > 0,
+      hasPreviousAnnotations: await this.hasPreviousFrameAnnotations(),
+      isValid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * 🔧 NEW: 检查是否有上一帧
+   */
+  async hasPreviousFrame() {
+    if (!window.PlantAnnotationTool?.plantDataManager) {
+      return false;
+    }
+    
+    const currentPlant = window.PlantAnnotationTool.appState.currentPlant;
+    if (!currentPlant || !currentPlant.selectedViewAngle) {
+      return false;
+    }
+    
+    return await this.getPreviousFrameId() !== null;
+  }
+
+  /**
+   * 🔧 NEW: 检查是否有上一帧标注
+   */
+  async hasPreviousFrameAnnotations() {
+    const previousAnnotations = await this.getPreviousFrameAnnotations();
+    return previousAnnotations && previousAnnotations.length > 0;
+  }
+
+  /**
+   * 🔧 NEW: 获取上一帧ID
+   */
+  async getPreviousFrameId() {
+    if (!window.PlantAnnotationTool?.plantDataManager) {
+      return null;
+    }
+    
+    const currentPlant = window.PlantAnnotationTool.appState.currentPlant;
+    if (!currentPlant || !currentPlant.selectedViewAngle || !currentPlant.selectedImage) {
+      return null;
+    }
+    
+    // 获取当前视角的所有图像
+    const images = await window.PlantAnnotationTool.plantDataManager.getPlantImages(
+      currentPlant.id, 
+      currentPlant.selectedViewAngle
+    );
+    
+    if (!images || images.length === 0) {
+      return null;
+    }
+    
+    // 找到当前图像的索引
+    const currentIndex = images.findIndex(img => img.id === currentPlant.selectedImage.id);
+    
+    if (currentIndex <= 0) {
+      return null; // 没有上一帧
+    }
+    
+    return images[currentIndex - 1].id;
+  }
+
+  /**
+   * 🔧 NEW: 获取上一帧标注数据
+   */
+  async getPreviousFrameAnnotations() {
+    const previousFrameId = await this.getPreviousFrameId();
+    if (!previousFrameId) {
+      return null;
+    }
+    
+    // 从数据管理器获取上一帧的标注
+    const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+    if (!plantDataManager) {
+      return null;
+    }
+    
+    try {
+      const annotations = plantDataManager.getImageAnnotations(previousFrameId);
+      return annotations || [];
+    } catch (error) {
+      console.warn('[SIFT] 获取上一帧标注失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 🔧 NEW: 获取当前图像数据
+   */
+  getCurrentImageData() {
+    if (!this.imageElement) {
+      throw new Error('当前图像未加载');
+    }
+    
+    // 🔧 FIX: If image is already loaded but might be tainted, reload with CORS
+    if (this.imageElement.complete && !this.imageElement.crossOrigin) {
+      console.warn('[SIFT] 图像已加载但未设置CORS，需要重新加载');
+      throw new Error('图像需要重新加载以支持CORS访问，请重新选择图像');
+    }
+    
+    // 创建临时canvas来获取图像数据
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = this.imageElement.width;
+    tempCanvas.height = this.imageElement.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    try {
+      tempCtx.drawImage(this.imageElement, 0, 0);
+      return tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+    } catch (error) {
+      console.error('[SIFT] 获取图像数据失败:', error);
+      throw new Error('无法获取图像数据，可能是跨域问题。请重新选择图像。');
+    }
+  }
+
+  /**
+   * 🔧 NEW: 获取上一帧图像数据
+   */
+  async getPreviousImageData() {
+    const previousFrameId = await this.getPreviousFrameId();
+    if (!previousFrameId) {
+      throw new Error('无法获取上一帧图像ID');
+    }
+    
+    // 获取上一帧图像的路径
+    const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+    if (!plantDataManager) {
+      throw new Error('植物数据管理器不可用');
+    }
+    
+    const currentPlant = window.PlantAnnotationTool.appState.currentPlant;
+    const images = await plantDataManager.getPlantImages(currentPlant.id, currentPlant.selectedViewAngle);
+    const previousImage = images.find(img => img.id === previousFrameId);
+    
+    if (!previousImage) {
+      throw new Error('找不到上一帧图像');
+    }
+    
+    // 🔧 FIX: 创建正确的图像URL（使用与主图像相同的方法）
+    const imageURL = await plantDataManager.fileSystemManager.createImageURL(previousImage);
+    
+    // 加载上一帧图像
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    
+    return new Promise((resolve, reject) => {
+      img.onload = () => {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        try {
+          tempCtx.drawImage(img, 0, 0);
+          const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          resolve(imageData);
+        } catch (error) {
+          console.error('[SIFT] 获取上一帧图像数据失败:', error);
+          reject(new Error('无法获取上一帧图像数据，可能是跨域问题'));
+        }
+      };
+      
+      img.onerror = () => {
+        console.error('[SIFT] 上一帧图像加载失败:', imageURL);
+        reject(new Error('加载上一帧图像失败'));
+      };
+      
+      img.src = imageURL;
+    });
+  }
+
+  /**
+   * 🔧 NEW: 显示非阻塞式校准预览和确认提示
+   */
+  showCalibrationPreview(originalAnnotations, calibratedAnnotations, quality) {
+    // 创建预览模式状态
+    this.calibrationPreviewState = {
+      originalAnnotations: [...originalAnnotations],
+      calibratedAnnotations: [...calibratedAnnotations],
+      quality,
+      isActive: true,
+      showOriginal: true,
+      showCalibrated: true,
+      showArrows: true
+    };
+    
+    // 显示非阻塞式提示
+    this.showNonBlockingNotification(quality);
+    
+    // 绑定键盘事件
+    this.bindCalibrationKeyboardEvents();
+    
+    // 重新渲染以显示预览
+    this.render();
+    
+    console.log('[SIFT] 校准预览已显示');
+  }
+
+  /**
+   * 🔧 NEW: 显示非阻塞式通知
+   */
+  showNonBlockingNotification(quality) {
+    // 创建通知元素
+    const notification = document.createElement('div');
+    notification.className = 'sift-notification';
+    notification.innerHTML = `
+      <div class="notification-content">
+        <div class="notification-header">
+          <h3>🔍 SIFT Match Result</h3>
+          <button class="close-btn" onclick="this.parentElement.parentElement.parentElement.remove()">×</button>
+        </div>
+        <div class="quality-info">
+          <p><strong>Match Quality:</strong> ${(quality.qualityScore * 100).toFixed(1)}%</p>
+          <p><strong>Average Confidence:</strong> ${(quality.averageConfidence * 100).toFixed(1)}%</p>
+          <p><strong>Average Offset:</strong> ${quality.averageOffset.toFixed(2)}px</p>
+          <p><strong>Successful Matches:</strong> ${quality.successfulMatches}/${quality.totalAnnotations}</p>
+        </div>
+        
+        <div class="notification-actions">
+          <button class="btn-accept" title="Accept Adjustment (Shortcut: A)">✓ Accept Adjustment (A)</button>
+          <button class="btn-reject" title="Reject Adjustment (Shortcut: R)">✗ Reject Adjustment (R)</button>
+        </div>
+        
+        <div class="notification-help">
+          <small>Shortcuts: A=Accept, R=Reject, ESC=Cancel</small>
+        </div>
+      </div>
+    `;
+    
+    // 添加样式
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      max-width: 350px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      z-index: 10000;
+      font-family: Arial, sans-serif;
+      animation: slideIn 0.3s ease-out;
+    `;
+    
+    // 添加动画样式
+    if (!document.getElementById('sift-notification-style')) {
+      const style = document.createElement('style');
+      style.id = 'sift-notification-style';
+      style.textContent = `
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        .sift-notification .notification-content {
+          padding: 15px;
+        }
+        .sift-notification .notification-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 10px;
+        }
+        .sift-notification .notification-header h3 {
+          margin: 0;
+          font-size: 16px;
+          color: #333;
+        }
+        .sift-notification .close-btn {
+          background: none;
+          border: none;
+          font-size: 18px;
+          cursor: pointer;
+          color: #666;
+          padding: 0;
+          width: 20px;
+          height: 20px;
+        }
+        .sift-notification .close-btn:hover {
+          color: #000;
+        }
+        .sift-notification .quality-info {
+          margin-bottom: 15px;
+          font-size: 13px;
+          color: #666;
+        }
+        .sift-notification .quality-info p {
+          margin: 3px 0;
+        }
+        .sift-notification .notification-actions {
+          display: flex;
+          gap: 10px;
+          margin-bottom: 10px;
+        }
+        .sift-notification .btn-accept,
+        .sift-notification .btn-reject {
+          flex: 1;
+          padding: 8px 12px;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 500;
+        }
+        .sift-notification .btn-accept {
+          background: #10b981;
+          color: white;
+        }
+        .sift-notification .btn-accept:hover {
+          background: #059669;
+        }
+        .sift-notification .btn-reject {
+          background: #ef4444;
+          color: white;
+        }
+        .sift-notification .btn-reject:hover {
+          background: #dc2626;
+        }
+        .sift-notification .notification-help {
+          text-align: center;
+          color: #999;
+          border-top: 1px solid #eee;
+          padding-top: 8px;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    // 绑定按钮事件
+    const acceptBtn = notification.querySelector('.btn-accept');
+    const rejectBtn = notification.querySelector('.btn-reject');
+    
+    acceptBtn.addEventListener('click', () => {
+      this.applyCalibrationResults();
+    });
+    
+    rejectBtn.addEventListener('click', () => {
+      this.cancelCalibration();
+    });
+    
+    // 添加到页面
+    document.body.appendChild(notification);
+    
+    // 存储引用以便后续清理
+    this.calibrationNotification = notification;
+    
+    // 自动隐藏时间（30秒）
+    this.notificationTimeout = setTimeout(() => {
+      this.cancelCalibration();
+    }, 30000);
+  }
+
+  /**
+   * 🔧 NEW: 绑定校准键盘事件
+   */
+  bindCalibrationKeyboardEvents() {
+    this.calibrationKeyboardHandler = (event) => {
+      if (!this.calibrationPreviewState?.isActive) return;
+      
+      switch (event.key.toLowerCase()) {
+        case 'a':
+          event.preventDefault();
+          this.applyCalibrationResults();
+          break;
+        case 'r':
+          event.preventDefault();
+          this.cancelCalibration();
+          break;
+        case 'p':
+          event.preventDefault();
+          this.toggleCalibrationPreview();
+          break;
+        case 'escape':
+          event.preventDefault();
+          this.cancelCalibration();
+          break;
+      }
+    };
+    
+    document.addEventListener('keydown', this.calibrationKeyboardHandler);
+  }
+
+  /**
+   * 🔧 NEW: 切换校准预览
+   */
+  toggleCalibrationPreview() {
+    if (!this.calibrationPreviewState) return;
+    
+    this.calibrationPreviewState.showOriginal = !this.calibrationPreviewState.showOriginal;
+    this.calibrationPreviewState.showCalibrated = !this.calibrationPreviewState.showCalibrated;
+    this.calibrationPreviewState.showArrows = !this.calibrationPreviewState.showArrows;
+    
+    this.render();
+  }
+
+  /**
+   * 🔧 NEW: 应用校准结果
+   */
+  async applyCalibrationResults() {
+    if (!this.calibrationPreviewState) return;
+    
+    try {
+      console.log('[SIFT] 应用校准结果');
+      
+      // 保存历史记录
+      this.saveState();
+      
+      // 应用校准后的标注
+      this.keypoints = [...this.calibrationPreviewState.calibratedAnnotations];
+      
+      // 清理预览状态
+      this.cleanupCalibrationPreview();
+      
+      // 重新渲染
+      this.render();
+      
+      // 触发自动保存
+      if (window.PlantAnnotationTool?.autoSave) {
+        await window.PlantAnnotationTool.autoSave();
+      }
+      
+      // 显示成功提示
+      this.showSiftSuccess('SIFT匹配成功应用', `已调整 ${this.keypoints.length} 个标注点`);
+      
+    } catch (error) {
+      console.error('[SIFT] 应用校准结果失败:', error);
+      this.showSiftError('应用校准结果失败', error.message);
+    }
+  }
+
+  /**
+   * 🔧 NEW: 取消校准
+   */
+  cancelCalibration() {
+    console.log('[SIFT] 取消校准');
+    
+    // 清理预览状态
+    this.cleanupCalibrationPreview();
+    
+    // 重新渲染
+    this.render();
+    
+    this.showSiftInfo('已取消SIFT匹配', '标注点保持原始位置');
+  }
+
+  /**
+   * 🔧 NEW: 清理校准预览
+   */
+  cleanupCalibrationPreview() {
+    // 移除通知
+    if (this.calibrationNotification) {
+      this.calibrationNotification.remove();
+      this.calibrationNotification = null;
+    }
+    
+    // 清除自动隐藏定时器
+    if (this.notificationTimeout) {
+      clearTimeout(this.notificationTimeout);
+      this.notificationTimeout = null;
+    }
+    
+    // 移除键盘事件监听
+    if (this.calibrationKeyboardHandler) {
+      document.removeEventListener('keydown', this.calibrationKeyboardHandler);
+      this.calibrationKeyboardHandler = null;
+    }
+    
+    // 清理状态
+    this.calibrationPreviewState = null;
+  }
+
+  /**
+   * 🔧 NEW: 显示SIFT错误消息
+   */
+  showSiftError(title, message) {
+    console.error(`[SIFT] ${title}: ${message}`);
+    if (window.PlantAnnotationTool?.showError) {
+      window.PlantAnnotationTool.showError(title, message);
+    } else {
+      alert(`${title}\n${message}`);
+    }
+  }
+
+  /**
+   * 🔧 NEW: 显示SIFT成功消息
+   */
+  showSiftSuccess(title, message) {
+    console.log(`[SIFT] ${title}: ${message}`);
+    if (window.PlantAnnotationTool?.showSuccess) {
+      window.PlantAnnotationTool.showSuccess(title, message);
+    } else {
+      alert(`${title}\n${message}`);
+    }
+  }
+
+  /**
+   * 🔧 NEW: 显示SIFT信息消息
+   */
+  showSiftInfo(title, message) {
+    console.log(`[SIFT] ${title}: ${message}`);
+    if (window.PlantAnnotationTool?.showInfo) {
+      window.PlantAnnotationTool.showInfo(title, message);
+    } else {
+      alert(`${title}\n${message}`);
+    }
+  }
+
+  /**
+   * 🔧 NEW: 创建匹配可视化
+   */
+  createMatchingVisualizations(data, type) {
+    const visualizations = [];
+    
+    if (type === 'original') {
+      data.forEach((annotation, index) => {
+        visualizations.push({
+          type: 'original',
+          x: annotation.x,
+          y: annotation.y,
+          color: '#ff4444',
+          size: 8,
+          label: annotation.order?.toString() || (index + 1).toString()
+        });
+      });
+    } else if (type === 'adjusted') {
+      data.forEach((annotation, index) => {
+        visualizations.push({
+          type: 'adjusted',
+          x: annotation.x,
+          y: annotation.y,
+          color: '#44ff44',
+          size: 8,
+          label: annotation.order?.toString() || (index + 1).toString()
+        });
+      });
+    } else if (type === 'arrows') {
+      data.forEach((annotation, index) => {
+        if (annotation.calibrationData) {
+          visualizations.push({
+            type: 'arrow',
+            from: { x: annotation.calibrationData.originalX, y: annotation.calibrationData.originalY },
+            to: { x: annotation.x, y: annotation.y },
+            color: '#ffaa00',
+            width: 2,
+            label: `${annotation.calibrationData.offset.toFixed(1)}px`
+          });
+        }
+      });
+    }
+    
+    return visualizations;
+  }
+
+  /**
+   * 🔧 NEW: 渲染校准预览
+   */
+  renderCalibrationPreview() {
+    if (!this.calibrationPreviewState) return;
+    
+    const { originalAnnotations, calibratedAnnotations, showOriginal, showCalibrated, showArrows } = this.calibrationPreviewState;
+    
+    // Render original positions (red)
+    if (showOriginal) {
+      originalAnnotations.forEach((annotation, index) => {
+        const screenPos = this.imageToScreen(annotation.x, annotation.y);
+        this.renderCalibrationPoint(screenPos.x, screenPos.y, '#ff4444', annotation.order || (index + 1), 'Original');
+      });
+    }
+    
+    // Render calibrated positions (green)
+    if (showCalibrated) {
+      calibratedAnnotations.forEach((annotation, index) => {
+        const screenPos = this.imageToScreen(annotation.x, annotation.y);
+        this.renderCalibrationPoint(screenPos.x, screenPos.y, '#44ff44', annotation.order || (index + 1), 'Calibrated');
+      });
+    }
+    
+    // 渲染移动箭头（橙色）
+    if (showArrows) {
+      calibratedAnnotations.forEach((annotation, index) => {
+        if (annotation.calibrationData) {
+          const originalPos = this.imageToScreen(annotation.calibrationData.originalX, annotation.calibrationData.originalY);
+          const calibratedPos = this.imageToScreen(annotation.x, annotation.y);
+          
+          this.renderCalibrationArrow(
+            originalPos.x, originalPos.y,
+            calibratedPos.x, calibratedPos.y,
+            annotation.calibrationData.offset
+          );
+        }
+      });
+    }
+  }
+
+  /**
+   * 🔧 NEW: 渲染校准点
+   */
+  renderCalibrationPoint(x, y, color, order, type) {
+    const radius = 8;
+    
+    // 绘制圆形
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, radius, 0, 2 * Math.PI);
+    this.ctx.fillStyle = color;
+    this.ctx.fill();
+    
+    // 绘制边框
+    this.ctx.strokeStyle = '#ffffff';
+    this.ctx.lineWidth = 2;
+    this.ctx.stroke();
+    
+    // 绘制序号
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.font = 'bold 12px Arial';
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText(order.toString(), x, y);
+    
+    // 绘制类型标签
+    this.ctx.fillStyle = color;
+    this.ctx.font = '10px Arial';
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'top';
+    this.ctx.fillText(type, x, y + radius + 2);
+  }
+
+  /**
+   * 🔧 NEW: 渲染校准箭头
+   */
+  renderCalibrationArrow(x1, y1, x2, y2, offset) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance < 2) return; // 太小的偏移不显示箭头
+    
+    // 绘制箭头线
+    this.ctx.beginPath();
+    this.ctx.moveTo(x1, y1);
+    this.ctx.lineTo(x2, y2);
+    this.ctx.strokeStyle = '#ffaa00';
+    this.ctx.lineWidth = 3;
+    this.ctx.setLineDash([5, 3]);
+    this.ctx.stroke();
+    this.ctx.setLineDash([]); // 重置虚线
+    
+    // 绘制箭头头部
+    const angle = Math.atan2(dy, dx);
+    const headLength = 12;
+    const headAngle = Math.PI / 6;
+    
+    this.ctx.beginPath();
+    this.ctx.moveTo(x2, y2);
+    this.ctx.lineTo(
+      x2 - headLength * Math.cos(angle - headAngle),
+      y2 - headLength * Math.sin(angle - headAngle)
+    );
+    this.ctx.moveTo(x2, y2);
+    this.ctx.lineTo(
+      x2 - headLength * Math.cos(angle + headAngle),
+      y2 - headLength * Math.sin(angle + headAngle)
+    );
+    this.ctx.strokeStyle = '#ffaa00';
+    this.ctx.lineWidth = 3;
+    this.ctx.stroke();
+    
+    // 绘制偏移距离标签
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+    
+    this.ctx.fillStyle = '#ffaa00';
+    this.ctx.font = 'bold 10px Arial';
+    this.ctx.textAlign = 'center';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText(`${offset.toFixed(1)}px`, midX, midY - 8);
   }
 }

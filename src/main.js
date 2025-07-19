@@ -424,6 +424,12 @@ function bindEventListeners() {
     clearAllBtn.addEventListener('click', handleClearAllAnnotations);
   }
   
+  // 🔧 NEW: SIFT匹配按钮
+  const siftMatchBtn = document.getElementById('sift-match-btn');
+  if (siftMatchBtn) {
+    siftMatchBtn.addEventListener('click', handleSiftMatch);
+  }
+  
   // 分支点预览切换按钮
   const togglePreviewBtn = document.getElementById('toggle-preview-btn');
   if (togglePreviewBtn) {
@@ -2475,6 +2481,13 @@ function handleKeyboardShortcuts(event) {
         handleSaveAnnotation();
         break;
     }
+  }
+  
+  // 🔧 NEW: SIFT匹配快捷键 (Shift+S)
+  if (event.shiftKey && event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    handleSiftMatch();
+    return;
   }
   
   // 应用快捷键（仅在主应用显示时）
@@ -5238,6 +5251,45 @@ async function handleClearAllAnnotations() {
     // Update annotation status display
     if (typeof updateAnnotationStatusDisplay === 'function') {
       updateAnnotationStatusDisplay();
+    }
+  }
+}
+
+/**
+ * 🔧 NEW: Handle SIFT matching
+ */
+async function handleSiftMatch() {
+  if (!annotationTool) {
+    showError('SIFT匹配失败', '标注工具未初始化');
+    return;
+  }
+  
+  if (!appState.currentPlant) {
+    showError('SIFT匹配失败', '请先选择植物');
+    return;
+  }
+  
+  // 禁用SIFT按钮防止重复点击
+  const siftBtn = document.getElementById('sift-match-btn');
+  if (siftBtn) {
+    siftBtn.disabled = true;
+    siftBtn.textContent = '⏳';
+  }
+  
+  try {
+    console.log('[SIFT] 开始执行SIFT匹配');
+    
+    // 调用AnnotationTool的SIFT匹配功能
+    await annotationTool.performSiftMatching();
+    
+  } catch (error) {
+    console.error('[SIFT] 匹配失败:', error);
+    showError('SIFT匹配失败', error.message || '执行SIFT匹配时发生错误');
+  } finally {
+    // 恢复SIFT按钮状态
+    if (siftBtn) {
+      siftBtn.disabled = false;
+      siftBtn.textContent = '🔍';
     }
   }
 }

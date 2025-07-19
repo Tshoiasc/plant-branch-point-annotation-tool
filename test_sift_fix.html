@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SIFT Matching Fix Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .result { margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 3px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .warning { background: #fff3cd; color: #856404; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>🔍 SIFT Matching Algorithm Fix Test</h1>
+    
+    <div class="test-section">
+        <h2>Test Results</h2>
+        <div id="results"></div>
+        <button onclick="testSiftAlgorithm()">Test SIFT Algorithm</button>
+    </div>
+
+    <script type="module">
+        import { SiftMatcher } from './src/core/SiftMatcher.js';
+
+        let siftMatcher;
+        
+        async function initializeSiftMatcher() {
+            try {
+                siftMatcher = new SiftMatcher();
+                console.log('SIFT Matcher initialized successfully');
+                return true;
+            } catch (error) {
+                console.error('Failed to initialize SIFT Matcher:', error);
+                return false;
+            }
+        }
+
+        // Mock image data for testing
+        function createMockImageData(width, height, pattern = 'gradient') {
+            const data = new Uint8ClampedArray(width * height * 4);
+            
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const index = (y * width + x) * 4;
+                    
+                    if (pattern === 'gradient') {
+                        // Create a gradient pattern
+                        const intensity = Math.floor((x / width) * 255);
+                        data[index] = intensity;     // R
+                        data[index + 1] = intensity; // G
+                        data[index + 2] = intensity; // B
+                        data[index + 3] = 255;       // A
+                    } else if (pattern === 'checkerboard') {
+                        // Create a checkerboard pattern
+                        const intensity = ((Math.floor(x / 10) + Math.floor(y / 10)) % 2) * 255;
+                        data[index] = intensity;     // R
+                        data[index + 1] = intensity; // G
+                        data[index + 2] = intensity; // B
+                        data[index + 3] = 255;       // A
+                    }
+                }
+            }
+            
+            return new ImageData(data, width, height);
+        }
+
+        function createMockAnnotations(count = 5) {
+            const annotations = [];
+            for (let i = 0; i < count; i++) {
+                annotations.push({
+                    id: `test-${i}`,
+                    order: i + 1,
+                    x: 100 + i * 50,
+                    y: 100 + i * 30,
+                    direction: Math.random() * 360,
+                    directionType: 'angle'
+                });
+            }
+            return annotations;
+        }
+
+        async function testSiftAlgorithm() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Testing SIFT algorithm...</p>';
+            
+            try {
+                // Initialize if not already done
+                if (!siftMatcher) {
+                    const initialized = await initializeSiftMatcher();
+                    if (!initialized) {
+                        throw new Error('Failed to initialize SIFT Matcher');
+                    }
+                }
+
+                // Create mock test data
+                const refImageData = createMockImageData(400, 300, 'gradient');
+                const targetImageData = createMockImageData(400, 300, 'gradient');
+                const refAnnotations = createMockAnnotations(3);
+                const targetAnnotations = createMockAnnotations(3);
+
+                // Add some realistic variation to target annotations
+                targetAnnotations.forEach(ann => {
+                    ann.x += Math.random() * 20 - 10; // ±10 pixel variation
+                    ann.y += Math.random() * 20 - 10;
+                });
+
+                console.log('Test data created:', {
+                    refImageData: refImageData.width + 'x' + refImageData.height,
+                    targetImageData: targetImageData.width + 'x' + targetImageData.height,
+                    refAnnotations: refAnnotations.length,
+                    targetAnnotations: targetAnnotations.length
+                });
+
+                // Test the calibration
+                const startTime = performance.now();
+                const calibratedAnnotations = await siftMatcher.calibrateAnnotations(
+                    refAnnotations,
+                    targetAnnotations,
+                    refImageData,
+                    targetImageData
+                );
+                const endTime = performance.now();
+
+                // Calculate quality metrics
+                const quality = siftMatcher.calculateMatchingQuality(calibratedAnnotations);
+
+                // Display results
+                let html = '<div class="result success">';
+                html += `<h3>✅ Test Completed Successfully</h3>`;
+                html += `<p><strong>Processing Time:</strong> ${(endTime - startTime).toFixed(2)}ms</p>`;
+                html += `<p><strong>Annotations Processed:</strong> ${calibratedAnnotations.length}</p>`;
+                html += `<p><strong>Average Confidence:</strong> ${(quality.averageConfidence * 100).toFixed(1)}%</p>`;
+                html += `<p><strong>Average Offset:</strong> ${quality.averageOffset.toFixed(2)}px</p>`;
+                html += `<p><strong>Success Rate:</strong> ${quality.successfulMatches}/${quality.totalAnnotations}</p>`;
+                html += `<p><strong>Quality Score:</strong> ${(quality.qualityScore * 100).toFixed(1)}%</p>`;
+                html += '</div>';
+
+                // Check if confidence is realistic (not 100%)
+                if (quality.averageConfidence < 0.95) {
+                    html += '<div class="result success">';
+                    html += '<h4>✅ Confidence Scores are Realistic</h4>';
+                    html += `<p>Average confidence of ${(quality.averageConfidence * 100).toFixed(1)}% is in the expected range (< 95%).</p>`;
+                    html += '</div>';
+                } else {
+                    html += '<div class="result warning">';
+                    html += '<h4>⚠️ Confidence Scores Still Too High</h4>';
+                    html += `<p>Average confidence of ${(quality.averageConfidence * 100).toFixed(1)}% may still be unrealistic.</p>`;
+                    html += '</div>';
+                }
+
+                // Show individual annotation results
+                html += '<div class="result">';
+                html += '<h4>Individual Annotation Results:</h4>';
+                html += '<table border="1" cellpadding="5">';
+                html += '<tr><th>Order</th><th>Original</th><th>Calibrated</th><th>Offset</th><th>Confidence</th><th>Method</th></tr>';
+                
+                calibratedAnnotations.forEach((calibrated, i) => {
+                    const original = targetAnnotations[i];
+                    const calibrationData = calibrated.calibrationData;
+                    
+                    html += `<tr>`;
+                    html += `<td>${calibrated.order}</td>`;
+                    html += `<td>(${original.x.toFixed(1)}, ${original.y.toFixed(1)})</td>`;
+                    html += `<td>(${calibrated.x.toFixed(1)}, ${calibrated.y.toFixed(1)})</td>`;
+                    html += `<td>${calibrationData.offset.toFixed(2)}px</td>`;
+                    html += `<td>${(calibrationData.confidence * 100).toFixed(1)}%</td>`;
+                    html += `<td>${calibrationData.method}</td>`;
+                    html += `</tr>`;
+                });
+                
+                html += '</table>';
+                html += '</div>';
+
+                resultsDiv.innerHTML = html;
+
+            } catch (error) {
+                console.error('SIFT test failed:', error);
+                resultsDiv.innerHTML = `
+                    <div class="result error">
+                        <h3>❌ Test Failed</h3>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                        <p><strong>Stack:</strong> ${error.stack}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Make function available globally
+        window.testSiftAlgorithm = testSiftAlgorithm;
+
+        // Auto-initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            await initializeSiftMatcher();
+        });
+    </script>
+</body>
+</html>
