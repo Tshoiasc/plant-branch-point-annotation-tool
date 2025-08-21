@@ -1,0 +1,475 @@
+[
+  {
+    "file": "/Users/tshoiasc/画图模板/index.html",
+    "diagnostics": []
+  },
+  {
+    "file": "/Users/tshoiasc/画图模板/src/core/AnnotationTool.js",
+    "diagnostics": [
+      {
+        "message": "'index' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 579,
+          "character": 38
+        },
+        "end": {
+          "line": 579,
+          "character": 43
+        }
+      },
+      {
+        "message": "'direction' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 1592,
+          "character": 10
+        },
+        "end": {
+          "line": 1592,
+          "character": 19
+        }
+      },
+      {
+        "message": "'originalRender' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 2129,
+          "character": 10
+        },
+        "end": {
+          "line": 2129,
+          "character": 24
+        }
+      },
+      {
+        "message": "'order' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 2401,
+          "character": 18
+        },
+        "end": {
+          "line": 2401,
+          "character": 23
+        }
+      },
+      {
+        "message": "'event' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 3001,
+          "character": 14
+        },
+        "end": {
+          "line": 3001,
+          "character": 19
+        }
+      },
+      {
+        "message": "'directionType' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 3672,
+          "character": 19
+        },
+        "end": {
+          "line": 3672,
+          "character": 32
+        }
+      },
+      {
+        "message": "'fillColor' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 3756,
+          "character": 46
+        },
+        "end": {
+          "line": 3756,
+          "character": 55
+        }
+      },
+      {
+        "message": "'keypoint' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 4238,
+          "character": 58
+        },
+        "end": {
+          "line": 4238,
+          "character": 66
+        }
+      },
+      {
+        "message": "'mousePos' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 4985,
+          "character": 48
+        },
+        "end": {
+          "line": 4985,
+          "character": 56
+        }
+      },
+      {
+        "message": "'mousePos' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 5174,
+          "character": 26
+        },
+        "end": {
+          "line": 5174,
+          "character": 34
+        }
+      },
+      {
+        "message": "'keypoint' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 5623,
+          "character": 58
+        },
+        "end": {
+          "line": 5623,
+          "character": 66
+        }
+      },
+      {
+        "message": "'keypoint' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 5772,
+          "character": 25
+        },
+        "end": {
+          "line": 5772,
+          "character": 33
+        }
+      },
+      {
+        "message": "'await' has no effect on the type of this expression.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 80007,
+        "start": {
+          "line": 5933,
+          "character": 36
+        },
+        "end": {
+          "line": 5938,
+          "character": 7
+        }
+      },
+      {
+        "message": "'index' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 6527,
+          "character": 32
+        },
+        "end": {
+          "line": 6527,
+          "character": 37
+        }
+      },
+      {
+        "message": "'index' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 6570,
+          "character": 49
+        },
+        "end": {
+          "line": 6570,
+          "character": 54
+        }
+      }
+    ]
+  },
+  {
+    "file": "/Users/tshoiasc/画图模板/scripts/migrate-regular-to-builtin.js",
+    "diagnostics": [
+      {
+        "message": "'plantId' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 100,
+          "character": 16
+        },
+        "end": {
+          "line": 100,
+          "character": 23
+        }
+      }
+    ]
+  },
+  {
+    "file": "/Users/tshoiasc/画图模板/src/core/BranchPointPreviewManager.js",
+    "diagnostics": []
+  },
+  {
+    "file": "/Users/tshoiasc/画图模板/src/main.js",
+    "diagnostics": [
+      {
+        "message": "'FileSystemManager' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 10,
+          "character": 0
+        },
+        "end": {
+          "line": 10,
+          "character": 64
+        }
+      },
+      {
+        "message": "'app' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 63,
+          "character": 4
+        },
+        "end": {
+          "line": 63,
+          "character": 7
+        }
+      },
+      {
+        "message": "'currentDataset' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 77,
+          "character": 4
+        },
+        "end": {
+          "line": 77,
+          "character": 18
+        }
+      },
+      {
+        "message": "'originalText' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 695,
+          "character": 10
+        },
+        "end": {
+          "line": 695,
+          "character": 22
+        }
+      },
+      {
+        "message": "'isCompleted' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 995,
+          "character": 8
+        },
+        "end": {
+          "line": 995,
+          "character": 19
+        }
+      },
+      {
+        "message": "'autoMoveSettings' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 1732,
+          "character": 12
+        },
+        "end": {
+          "line": 1732,
+          "character": 28
+        }
+      },
+      {
+        "message": "'containerScrollTop' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 1873,
+          "character": 10
+        },
+        "end": {
+          "line": 1873,
+          "character": 28
+        }
+      },
+      {
+        "message": "'groupImagesByPlantAndView' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 3160,
+          "character": 9
+        },
+        "end": {
+          "line": 3160,
+          "character": 34
+        }
+      },
+      {
+        "message": "'generatePreviewHTML' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 3202,
+          "character": 15
+        },
+        "end": {
+          "line": 3202,
+          "character": 34
+        }
+      },
+      {
+        "message": "'handleUncompletePlant' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 4064,
+          "character": 15
+        },
+        "end": {
+          "line": 4064,
+          "character": 36
+        }
+      },
+      {
+        "message": "Could not find name 'showFullscreenLoading'. Did you mean 'hideFullscreenLoading'?",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 2570,
+        "start": {
+          "line": 4783,
+          "character": 4
+        },
+        "end": {
+          "line": 4783,
+          "character": 25
+        }
+      },
+      {
+        "message": "'plantId' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 5129,
+          "character": 40
+        },
+        "end": {
+          "line": 5129,
+          "character": 47
+        }
+      },
+      {
+        "message": "'plantId' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 5198,
+          "character": 43
+        },
+        "end": {
+          "line": 5198,
+          "character": 50
+        }
+      },
+      {
+        "message": "'performClearOperation' is declared but its value is never read.",
+        "severity": 3,
+        "level": "Hint",
+        "source": "ts",
+        "code": 6133,
+        "start": {
+          "line": 5519,
+          "character": 15
+        },
+        "end": {
+          "line": 5519,
+          "character": 36
+        }
+      }
+    ]
+  }
+]

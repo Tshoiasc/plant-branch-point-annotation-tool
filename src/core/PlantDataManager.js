@@ -1270,7 +1270,7 @@ export class PlantDataManager {
     // 🔧 FIX: 按类型分组标注点
     const annotationsByType = {};
     
-    // 分组：regular, 和各种自定义类型
+    // 分组：内置regular(已迁移为自定义) 与 各种自定义类型
     annotations.forEach(annotation => {
       // 🐛 BUGFIX: Ensure all annotations have annotationType field set
       if (!annotation.annotationType) {
@@ -1278,13 +1278,15 @@ export class PlantDataManager {
         if (annotation.customTypeId) {
           annotation.annotationType = 'custom'; // Preserve custom type
         } else {
-          annotation.annotationType = 'regular'; // Default to regular for missing field
+          // 迁移后不应再出现纯regular，兜底映射到内置类型
+          annotation.annotationType = 'custom';
+          annotation.customTypeId = annotation.customTypeId || 'builtin-regular-keypoint';
         }
       }
       
       const typeKey = annotation.annotationType === 'custom' 
         ? `custom:${annotation.customTypeId || 'unknown'}`
-        : 'regular';
+        : `custom:builtin-regular-keypoint`;
       
       if (!annotationsByType[typeKey]) {
         annotationsByType[typeKey] = [];

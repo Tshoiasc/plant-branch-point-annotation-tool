@@ -334,7 +334,7 @@ export class BranchPointPreviewManager {
       const previousImageData = await this.getPreviousImage();
       
       if (!previousImageData) {
-        this.showNoPreview('这是第一张图像');
+        this.showNoPreview('This is the first image');
         return;
       }
       
@@ -342,7 +342,7 @@ export class BranchPointPreviewManager {
       const previousAnnotations = await this.plantDataManager.getImageAnnotations(previousImageData.id);
       
       if (!previousAnnotations || previousAnnotations.length === 0) {
-        this.showNoPreview('上一张图像无标注');
+        this.showNoPreview('This image has no annotations');
         return;
       }
       
@@ -355,8 +355,8 @@ export class BranchPointPreviewManager {
       this.showLoading(false);
       
     } catch (error) {
-      console.error('更新分支点预览失败:', error);
-      this.showNoPreview('预览加载失败');
+      console.error('Update branch point preview failed:', error);
+      this.showNoPreview('Preview loading failed');
     }
   }
 
@@ -378,7 +378,7 @@ export class BranchPointPreviewManager {
       return images[previousIndex] || null;
       
     } catch (error) {
-      console.error('获取上一张图像失败:', error);
+      console.error('Get previous image failed:', error);
       return null;
     }
   }
@@ -405,7 +405,7 @@ export class BranchPointPreviewManager {
     // 从AnnotationTool获取下一个可用编号
     const annotationTool = window.PlantAnnotationTool?.annotationTool;
     if (!annotationTool) {
-      console.warn('[预览] AnnotationTool不可用，使用后备方案');
+      console.warn('[Preview] AnnotationTool is not available, using fallback');
       return this.currentKeypointCount + 1;
     }
 
@@ -418,21 +418,21 @@ export class BranchPointPreviewManager {
       const currentCustomType = customAnnotationManager.getCurrentCustomType();
       if (currentCustomType && typeof annotationTool.findNextAvailableOrderForType === 'function') {
         const nextOrder = annotationTool.findNextAvailableOrderForType(currentCustomType.id);
-        console.log(`[预览] 自定义模式 - 从AnnotationTool获取${currentCustomType.id}类型的下一个编号: ${nextOrder}, 当前标注点数: ${this.currentKeypointCount}`);
+        console.log(`[Preview] Custom mode - get next order for type ${currentCustomType.id}: ${nextOrder}, current keypoint count: ${this.currentKeypointCount}`);
         return nextOrder;
       }
     } else {
       // 常规标注模式：获取常规标注的下一个编号
       if (typeof annotationTool.findNextAvailableOrder === 'function') {
         const nextOrder = annotationTool.findNextAvailableOrder();
-        console.log(`[预览] 常规模式 - 从AnnotationTool获取下一个编号: ${nextOrder}, 当前标注点数: ${this.currentKeypointCount}`);
+        console.log(`[Preview] Regular mode - get next order: ${nextOrder}, current keypoint count: ${this.currentKeypointCount}`);
         return nextOrder;
       }
     }
 
     // 后备方案：简单计算
     const fallbackOrder = this.currentKeypointCount + 1;
-    console.log(`[预览] 使用后备方案计算下一个编号: ${fallbackOrder}, 当前标注点数: ${this.currentKeypointCount}`);
+    console.log(`[Preview] Using fallback to calculate next order: ${fallbackOrder}, current keypoint count: ${this.currentKeypointCount}`);
     return fallbackOrder;
   }
 
@@ -462,17 +462,20 @@ export class BranchPointPreviewManager {
           annotation.annotationType === 'custom' && 
           annotation.customTypeId === currentCustomType.id
         );
-        previewMessage = `上一张图像暂无第${nextOrder}个${currentCustomType.name}标注点`;
+        previewMessage = `This image has no ${nextOrder}th ${currentCustomType.name} annotation`;
       } else {
-        previewMessage = `上一张图像暂无第${nextOrder}个自定义标注点`;
+        previewMessage = `This image has no ${nextOrder}th custom annotation`;
       }
     } else {
-      // 常规标注模式：只匹配编号和常规类型
+      // 迁移后常规标注视为内置类型
       targetAnnotation = annotations.find(annotation => 
         annotation.order === nextOrder && 
-        (annotation.annotationType === 'regular' || !annotation.annotationType)
+        (
+          (annotation.annotationType === 'custom' && annotation.customTypeId === 'builtin-regular-keypoint') ||
+          (!annotation.annotationType && !annotation.customTypeId) // 兜底兼容旧数据
+        )
       );
-      previewMessage = `上一张图像暂无第${nextOrder}个分支点`;
+      previewMessage = `This image has no ${nextOrder}th branch point`;
     }
     
     // 如果没有对应的标注点，显示无预览
@@ -485,7 +488,7 @@ export class BranchPointPreviewManager {
     this.hideNoPreview();
     
     try {
-      console.log('开始加载预览图像:', imageData);
+      console.log('Start loading preview image:', imageData);
       
       // 获取图像URL的多种方式
       let imageURL;
@@ -493,29 +496,29 @@ export class BranchPointPreviewManager {
       // 方式1：如果有file对象，直接使用
       if (imageData.file && imageData.file instanceof File) {
         imageURL = URL.createObjectURL(imageData.file);
-        console.log('使用file对象创建URL:', imageURL);
+          console.log('Create URL using file object:', imageURL);
       }
       // 方式2：如果有现成的URL
       else if (imageData.url) {
         imageURL = imageData.url;
-        console.log('使用现有URL:', imageURL);
+        console.log('Use existing URL:', imageURL);
       }
       // 方式3：使用FileSystemManager (HTTP后端或传统文件系统)
       else if (this.plantDataManager?.fileSystemManager) {
         try {
           imageURL = await this.plantDataManager.fileSystemManager.createImageURL(imageData);
-          console.log('使用FileSystemManager创建URL:', imageURL);
+          console.log('Create URL using FileSystemManager:', imageURL);
         } catch (error) {
-          console.warn('FileSystemManager创建URL失败:', error);
+          console.warn('Create URL using FileSystemManager failed:', error);
           
           // 如果是传统文件系统，尝试直接从handle读取
           if (imageData.handle) {
             try {
               const file = await imageData.handle.getFile();
               imageURL = URL.createObjectURL(file);
-              console.log('直接从handle创建URL:', imageURL);
+              console.log('Create URL directly from handle:', imageURL);
             } catch (handleError) {
-              console.error('从handle创建URL也失败:', handleError);
+              console.error('Create URL from handle also failed:', handleError);
               throw new Error('无法获取图像数据：所有方法都失败');
             }
           } else {
@@ -532,12 +535,12 @@ export class BranchPointPreviewManager {
       img.crossOrigin = 'anonymous'; // 🔧 FIX: Prevent canvas taint issues
       await new Promise((resolve, reject) => {
         img.onload = () => {
-          console.log('图像加载成功:', img.width, 'x', img.height);
+          console.log('Image loaded successfully:', img.width, 'x', img.height);
           resolve();
         };
         img.onerror = (error) => {
-          console.error('图像加载失败:', error);
-          reject(new Error('图像加载失败'));
+          console.error('Image loading failed:', error);
+          reject(new Error('Image loading failed'));
         };
         img.src = imageURL;
       });
@@ -604,11 +607,11 @@ export class BranchPointPreviewManager {
         setTimeout(() => URL.revokeObjectURL(imageURL), 5000);
       }
       
-      console.log('预览渲染完成');
+      console.log('Preview rendering completed');
       
     } catch (error) {
-      console.error('渲染预览失败:', error);
-      this.showNoPreview(`预览加载失败: ${error.message}`);
+      console.error('Preview rendering failed:', error);
+      this.showNoPreview(`Preview loading failed: ${error.message}`);
     }
   }
 
@@ -673,7 +676,7 @@ export class BranchPointPreviewManager {
       this.previewCtx.fillStyle = '#ff9800';
       this.previewCtx.font = 'bold 6px Arial';
       this.previewCtx.textAlign = 'center';
-      this.previewCtx.fillText('目标', x, y + radius + 8);
+      this.previewCtx.fillText('Target', x, y + radius + 8);
     }
   }
 
@@ -744,7 +747,7 @@ export class BranchPointPreviewManager {
    */
   renderZoomInfo(scaleX, scaleY) {
     const actualScale = this.zoomLevel; // 使用用户设置的缩放级别
-    const zoomText = `${actualScale}x放大`;
+    const zoomText = `${actualScale}x zoom`;
     
     this.previewCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     this.previewCtx.fillRect(5, 5, 60, 16);
@@ -802,19 +805,19 @@ export class BranchPointPreviewManager {
     try {
       // 如果没有缓存的预览数据，先更新预览
       if (!this.previousImageData || !this.previousAnnotations) {
-        console.log(`[预期位置] 没有缓存的预览数据，尝试获取上一张图像`);
+        console.log(`[Expected position] No cached preview data, trying to get previous image`);
 
         // 获取上一张图像
         const previousImageData = await this.getPreviousImage();
         if (!previousImageData) {
-          console.log(`[预期位置] 没有上一张图像数据`);
+          console.log(`[Expected position] No previous image data`);
           return null;
         }
 
         // 获取上一张图像的标注数据
         const previousAnnotations = await this.plantDataManager.getImageAnnotations(previousImageData.id);
         if (!previousAnnotations || previousAnnotations.length === 0) {
-          console.log(`[预期位置] 上一张图像没有标注`);
+          console.log(`[Expected position] Previous image has no annotations`);
           return null;
         }
 
@@ -827,21 +830,21 @@ export class BranchPointPreviewManager {
       const targetAnnotation = this.previousAnnotations.find(annotation => annotation.order === targetOrder);
 
       if (!targetAnnotation) {
-        console.log(`[预期位置] 上一张图像中未找到编号${targetOrder}的标注点`);
+        console.log(`[Expected position] No annotation found for order ${targetOrder} in previous image`);
         return null;
       }
 
-      console.log(`[预期位置] 找到编号${targetOrder}的参考位置: (${targetAnnotation.x.toFixed(1)}, ${targetAnnotation.y.toFixed(1)})`);
+      console.log(`[Expected position] Found reference position for order ${targetOrder}: (${targetAnnotation.x.toFixed(1)}, ${targetAnnotation.y.toFixed(1)})`);
 
       return {
         x: targetAnnotation.x,
         y: targetAnnotation.y,
         order: targetAnnotation.order,
-        sourceImage: this.previousImageData.timeString || '上一张图像'
+        sourceImage: this.previousImageData.timeString || 'Previous image'
       };
 
     } catch (error) {
-      console.error('[预期位置] 获取预期位置失败:', error);
+      console.error('[Expected position] Get expected position failed:', error);
       return null;
     }
   }
@@ -931,7 +934,7 @@ export class BranchPointPreviewManager {
       const previousImageData = await this.getPreviousImage();
       
       if (!previousImageData) {
-        this.showNoPreview('这是第一张图像');
+        this.showNoPreview('This is the first image');
         return;
       }
       
@@ -939,7 +942,7 @@ export class BranchPointPreviewManager {
       const previousAnnotations = await this.plantDataManager.getImageAnnotations(previousImageData.id);
       
       if (!previousAnnotations || previousAnnotations.length === 0) {
-        this.showNoPreview('上一张图像无标注');
+        this.showNoPreview('This image has no annotations');
         return;
       }
       
@@ -947,7 +950,7 @@ export class BranchPointPreviewManager {
       const targetAnnotation = previousAnnotations.find(annotation => annotation.order === targetOrder);
       
       if (!targetAnnotation) {
-        this.showNoPreview(`上一张图像无第${targetOrder}个分支点`);
+        this.showNoPreview(`This image has no ${targetOrder}th branch point`);
         return;
       }
       
@@ -958,8 +961,8 @@ export class BranchPointPreviewManager {
       await this.renderSpecificOrderPreview(previousImageData, previousAnnotations, targetOrder);
       
     } catch (error) {
-      console.error('显示特定编号预览失败:', error);
-      this.showNoPreview('预览加载失败');
+      console.error('Show specific order preview failed:', error);
+      this.showNoPreview('Preview loading failed');
     }
   }
 
@@ -980,9 +983,9 @@ export class BranchPointPreviewManager {
    */
   updateSpecificPreviewTitle(imageData, targetOrder) {
     if (this.previewTitle) {
-      const timeString = imageData.timeString || '未知时间';
-      this.previewTitle.textContent = `拖动中: 第${targetOrder}个分支点`;
-      this.previewTitle.title = `${timeString} - 正在拖动第${targetOrder}个分支点，参考上一张图像位置`;
+      const timeString = imageData.timeString || 'Unknown time';
+      this.previewTitle.textContent = `Dragging: ${targetOrder}th branch point`;
+      this.previewTitle.title = `${timeString} - Dragging ${targetOrder}th branch point, reference position from previous image`;
     }
   }
 
@@ -996,7 +999,7 @@ export class BranchPointPreviewManager {
     const targetAnnotation = annotations.find(annotation => annotation.order === targetOrder);
     
     if (!targetAnnotation) {
-      this.showNoPreview(`上一张图像暂无第${targetOrder}个分支点`);
+      this.showNoPreview(`This image has no ${targetOrder}th branch point`);
       return;
     }
     
@@ -1004,7 +1007,7 @@ export class BranchPointPreviewManager {
     this.hideNoPreview();
     
     try {
-      console.log('渲染特定编号预览:', targetOrder);
+      console.log('Render specific order preview:', targetOrder);
       
       // 获取图像URL的多种方式（与renderPreview保持一致）
       let imageURL;
@@ -1022,7 +1025,7 @@ export class BranchPointPreviewManager {
         try {
           imageURL = await this.plantDataManager.fileSystemManager.createImageURL(imageData);
         } catch (error) {
-          console.warn('FileSystemManager创建URL失败:', error);
+          console.warn('Create URL using FileSystemManager failed:', error);
           
           // 如果是传统文件系统，尝试直接从handle读取
           if (imageData.handle) {
@@ -1030,8 +1033,8 @@ export class BranchPointPreviewManager {
               const file = await imageData.handle.getFile();
               imageURL = URL.createObjectURL(file);
             } catch (handleError) {
-              console.error('从handle创建URL也失败:', handleError);
-              throw new Error('无法获取图像数据：所有方法都失败');
+              console.error('Create URL from handle also failed:', handleError);
+              throw new Error('Failed to get image data: all methods failed');
             }
           } else {
             throw error;
@@ -1039,7 +1042,7 @@ export class BranchPointPreviewManager {
         }
       }
       else {
-        throw new Error('无法获取图像数据：缺少必要的图像信息或文件系统管理器');
+        throw new Error('Failed to get image data: missing necessary image information or file system manager');
       }
       
       // 加载图像
@@ -1047,7 +1050,7 @@ export class BranchPointPreviewManager {
       img.crossOrigin = 'anonymous'; // 🔧 FIX: Prevent canvas taint issues
       await new Promise((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = () => reject(new Error('图像加载失败'));
+        img.onerror = () => reject(new Error('Image loading failed'));
         img.src = imageURL;
       });
       
@@ -1105,11 +1108,11 @@ export class BranchPointPreviewManager {
         setTimeout(() => URL.revokeObjectURL(imageURL), 5000);
       }
       
-      console.log('特定编号预览渲染完成');
+      console.log('Specific order preview rendering completed');
       
     } catch (error) {
-      console.error('渲染特定编号预览失败:', error);
-      this.showNoPreview(`预览加载失败: ${error.message}`);
+      console.error('Specific order preview rendering failed:', error);
+      this.showNoPreview(`Preview loading failed: ${error.message}`);
     }
   }
 
@@ -1155,6 +1158,6 @@ export class BranchPointPreviewManager {
     // 添加拖动指示
     this.previewCtx.fillStyle = '#ff9800';
     this.previewCtx.font = 'bold 7px Arial';
-    this.previewCtx.fillText('拖动中', x, y + radius + 12);
+    this.previewCtx.fillText('Dragging', x, y + radius + 12);
   }
 } 

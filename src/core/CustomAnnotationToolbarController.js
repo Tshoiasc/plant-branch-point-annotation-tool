@@ -30,8 +30,9 @@ export class CustomAnnotationToolbarController {
     
     // Controls
     this.toolbarCustomTypeSelect = document.getElementById('toolbar-custom-type-select');
-    this.switchCustomModeBtn = document.getElementById('switch-custom-mode-btn');
-    this.normalModeBtn = document.getElementById('normal-mode-btn');
+    // Removed mode buttons (selection-driven)
+    this.switchCustomModeBtn = null;
+    this.normalModeBtn = null;
     this.customSettingsBtn = document.getElementById('custom-settings-btn');
   }
 
@@ -42,16 +43,21 @@ export class CustomAnnotationToolbarController {
     // Custom type selector
     this.toolbarCustomTypeSelect.addEventListener('change', () => {
       this.onCustomTypeSelected();
+      const selectedTypeId = this.toolbarCustomTypeSelect.value;
+      if (selectedTypeId) {
+        try {
+          this.customAnnotationManager.setCustomAnnotationMode(selectedTypeId);
+          this.showModeChangeNotification('custom', selectedTypeId);
+        } catch (error) {
+          alert(`Error switching type: ${error.message}`);
+        }
+      } else {
+        this.customAnnotationManager.setNormalMode();
+        this.showModeChangeNotification('normal');
+      }
     });
     
-    // Mode switch buttons
-    this.switchCustomModeBtn.addEventListener('click', () => {
-      this.switchToCustomMode();
-    });
-    
-    this.normalModeBtn.addEventListener('click', () => {
-      this.switchToNormalMode();
-    });
+    // Selection-driven: selecting a type immediately activates it
     
     // Settings button
     this.customSettingsBtn.addEventListener('click', () => {
@@ -127,7 +133,7 @@ export class CustomAnnotationToolbarController {
   switchToCustomMode() {
     const selectedTypeId = this.toolbarCustomTypeSelect.value;
     if (!selectedTypeId) {
-      alert('Please select a custom type first.');
+      alert('Please select an annotation type first.');
       return;
     }
     
@@ -173,11 +179,11 @@ export class CustomAnnotationToolbarController {
     
     // Update mode indicator
     if (currentMode === 'custom') {
-      this.customModeIndicator.textContent = 'Custom';
+      this.customModeIndicator.textContent = 'Type';
       this.customModeIndicator.style.color = '#059669';
       this.customModeIndicator.style.fontWeight = '600';
     } else {
-      this.customModeIndicator.textContent = 'Normal';
+      this.customModeIndicator.textContent = 'Off';
       this.customModeIndicator.style.color = 'var(--text-primary)';
       this.customModeIndicator.style.fontWeight = '500';
     }
@@ -206,36 +212,18 @@ export class CustomAnnotationToolbarController {
     const selectedTypeId = this.toolbarCustomTypeSelect.value;
     const hasCustomTypes = this.customAnnotationManager.getAllCustomTypes().length > 0;
     
-    // Update switch to custom button
-    this.switchCustomModeBtn.disabled = !selectedTypeId || currentMode === 'custom';
-    
-    // Update normal mode button
-    this.normalModeBtn.disabled = currentMode === 'normal';
-    
-    // Update custom type selector
-    this.toolbarCustomTypeSelect.disabled = currentMode === 'custom';
-    
-    // Update button text based on state
-    if (currentMode === 'custom') {
-      this.switchCustomModeBtn.textContent = 'Using Custom';
-      this.normalModeBtn.textContent = 'Exit Custom';
-    } else {
-      this.switchCustomModeBtn.textContent = 'Use Custom';
-      this.normalModeBtn.textContent = 'Normal Mode';
-    }
-    
-    // Show/hide controls based on availability
+    // Always enable selector; selection applies immediately
+    this.toolbarCustomTypeSelect.disabled = false;
+
+    // Show/hide message based on availability
     if (!hasCustomTypes) {
       this.toolbarCustomTypeSelect.style.display = 'none';
-      this.switchCustomModeBtn.style.display = 'none';
-      this.normalModeBtn.style.display = 'none';
+      // buttons removed
       
       // Show message to create types
       this.showNoTypesMessage();
     } else {
       this.toolbarCustomTypeSelect.style.display = 'block';
-      this.switchCustomModeBtn.style.display = 'block';
-      this.normalModeBtn.style.display = 'block';
       this.hideNoTypesMessage();
     }
   }
@@ -259,8 +247,8 @@ export class CustomAnnotationToolbarController {
         margin-bottom: 10px;
       `;
       message.innerHTML = `
-        <div style="margin-bottom: 4px;">No custom types created</div>
-        <div style="font-size: 0.7rem;">Click Settings to create types</div>
+        <div style="margin-bottom: 4px;">No annotation types created</div>
+        <div style="font-size: 0.7rem;">Click Annotation Type Setting to create types</div>
       `;
       
       this.toolbarCustomTypeSelect.parentNode.appendChild(message);

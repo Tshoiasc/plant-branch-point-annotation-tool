@@ -584,7 +584,9 @@ export class AnnotationTool {
       if (keypoint.annotationType === 'custom') {
         this.renderCustomKeypoint(keypoint, screenPos, displayStrategy);
       } else {
-        this.renderRegularKeypoint(keypoint, screenPos, displayStrategy, index);
+        // 将任何非custom标注兜底视为内置regular类型（迁移后极少出现）
+        const fallback = { ...keypoint, annotationType: 'custom', customTypeId: 'builtin-regular-keypoint' };
+        this.renderCustomKeypoint(fallback, screenPos, displayStrategy);
       }
     });
     
@@ -719,6 +721,11 @@ export class AnnotationTool {
     } else if (displayStrategy.showExternalLabel) {
       this.renderCustomPointLabel(keypoint, screenPos, customType, displayStrategy);
     }
+
+    // 绘制方向指示（默认开启；仅当显式为 false 时关闭）
+    if (!(customType && customType.metadata && customType.metadata.isDirectional === false)) {
+      this.renderDirectionIndicator(screenPos.x, screenPos.y, keypoint.direction, keypoint);
+    }
   }
   
   /**
@@ -759,6 +766,16 @@ export class AnnotationTool {
     
     if (displayStrategy.showExternalLabel) {
       this.renderCustomRegionLabel(keypoint, { x: centerX, y: screenPos.y }, customType, displayStrategy);
+    }
+
+    // 绘制方向指示（矩形中心为锚点；默认开启，除非 isDirectional === false）
+    if (!(customType && customType.metadata && customType.metadata.isDirectional === false)) {
+      this.renderDirectionIndicator(
+        centerX,
+        centerY,
+        keypoint.direction,
+        keypoint
+      );
     }
   }
   
@@ -1227,15 +1244,31 @@ export class AnnotationTool {
 
           // 检查是否处于自定义标注模式
           if (this.customAnnotationManager && this.customAnnotationManager.isInCustomMode()) {
-            // 处理自定义标注模式下的点击
-            this.handleCustomAnnotationMode(mousePos);
-            return;
+            const customType = this.customAnnotationManager.getCurrentCustomType();
+            if (!customType) {
+              console.warn('No custom type selected');
+              return;
+            }
+            if (customType.type === 'region') {
+              // 区域类型：走自定义区域流程
+              this.handleCustomAnnotationMode(mousePos);
+              return;
+            }
+            if (customType.type === 'point') {
+              // 点类型：允许拖拽设置方向或简单点击后进入方向选择
+              this.state.blankAreaClickStart = mousePos;
+              this.state.mouseDownTime = Date.now();
+              this.state.wasDraggedDuringSession = false;
+              return;
+            }
           }
 
-          // 记录空白区域点击，准备创建标注点
-          this.state.blankAreaClickStart = mousePos;
-          this.state.mouseDownTime = Date.now();
-          this.state.wasDraggedDuringSession = false;
+          // 🚫 禁止在未选择 Annotation Type 时创建标注
+          console.warn('[AnnotationTool] Annotation disabled: please select an Annotation Type to start annotating.');
+          if (window.PlantAnnotationTool?.showError) {
+            window.PlantAnnotationTool.showError('Annotation Disabled', 'Please open Annotation Type Setting and select a type before annotating.');
+          }
+          return;
         }
       }
     } else if (event.button === 2) { // 右键
@@ -1302,7 +1335,7 @@ export class AnnotationTool {
         // 距离足够，标记为拖拽状态
         this.state.wasDraggedDuringSession = true;
 
-        // 开始方向拖拽
+        // 自定义点类型也支持方向拖拽
         this.startDirectionAnnotation(this.state.blankAreaClickStart);
         this.state.blankAreaClickStart = null; // 清除空白点击状态
         this.updateDirectionDragging(mousePos);
@@ -1463,7 +1496,7 @@ export class AnnotationTool {
       this.restoreNormalPreview();
     }
     
-    // 检查是否是空白区域的简单点击（创建无方向点）
+    // 检查是否是空白区域的简单点击（进入方向选择或创建点）
     if (this.state.blankAreaClickStart) {
       const distance = Math.sqrt(
         Math.pow(mousePos.x - this.state.blankAreaClickStart.x, 2) +
@@ -1476,8 +1509,24 @@ export class AnnotationTool {
 
       // 判断是否是简单点击：距离小、时间短、没有拖拽
       if (distance < 8 && timeSinceMouseDown < 300 && !wasDragged) {
-        // 创建无方向标注点
-        this.createNoDirectionKeypoint(this.state.blankAreaClickStart);
+        const isCustomPointMode = this.customAnnotationManager?.isInCustomMode() && this.customAnnotationManager.getCurrentCustomType()?.type === 'point';
+        if (isCustomPointMode) {
+          // 自定义点类型：创建无方向点，不自动进入方向选择
+          const imagePos = this.screenToImage(this.state.blankAreaClickStart.x, this.state.blankAreaClickStart.y);
+          const currentType = this.customAnnotationManager.getCurrentCustomType();
+          // 创建时不写入 direction 字段
+          const kp = this.addKeypointWithDirection(imagePos.x, imagePos.y, undefined, currentType.id);
+          if (kp) {
+            // 确保移除可能被默认赋值的 direction
+            delete kp.direction;
+            delete kp.directionType;
+            this.render();
+            this.autoSaveCurrentImage();
+          }
+        } else {
+          // 未选择自定义点类型：保留兼容路径（此前在mouseDown已阻止未选类型）
+          this.createNoDirectionKeypoint(this.state.blankAreaClickStart);
+        }
       }
 
       // 清除空白点击状态
@@ -1507,6 +1556,14 @@ export class AnnotationTool {
    * 创建无方向标注点
    */
   createNoDirectionKeypoint(mousePos) {
+    // 🚫 不允许在未选择 Annotation Type 的情况下创建“默认/regular”关键点
+    if (!this.customAnnotationManager || !this.customAnnotationManager.isInCustomMode()) {
+      if (window.PlantAnnotationTool?.showError) {
+        window.PlantAnnotationTool.showError('Annotation Disabled', 'Please select an Annotation Type before creating keypoints.');
+      }
+      return;
+    }
+
     // 🔧 FIX: Comprehensive bounds checking for annotation creation
     if (!this.canCreateAnnotationAt(mousePos.x, mousePos.y)) {
       if (window.PlantAnnotationTool?.showError) {
@@ -1517,41 +1574,26 @@ export class AnnotationTool {
 
     const imagePos = this.screenToImage(mousePos.x, mousePos.y);
 
-    // 🔧 NEW: 创建支持多方向的标注点
-    const keypoint = {
-      id: Date.now().toString(),
-      x: imagePos.x,
-      y: imagePos.y,
-      direction: null, // 保持向后兼容
-      directionType: null,
-      directions: [], // 🔧 NEW: 支持多方向的数组
-      maxDirections: 1, // 🔧 NEW: 最大方向数，默认为1
-      order: this.findNextAvailableOrder(),
-      annotationType: 'regular' // 🔧 FIX: Add missing annotationType to fix numbering bug
-    };
-
-    this.keypoints.push(keypoint);
-    this.saveState();
-    this.autoSaveCurrentImage();
-    this.render();
-
-    // 🔄 NEW: 实时同步 - 新标注点创建
-    this.triggerRealTimeSync('ADD_KEYPOINT', keypoint);
-
-    // 同步分支点预览
-    this.syncBranchPointPreview();
-
-    // 🔧 FIX: Set flag to indicate we just created a new point
-    this.justCreatedNewPoint = true;
-
-    // 🔧 FIX: Only move to expected position if auto-move is enabled
-    if (this.state.autoMoveToExpectedPosition) {
-      this.moveToNextExpectedPosition();
-      this.justCreatedNewPoint = false; // Reset flag after moving
+    // 在“类型模式”下，空白点击应该创建当前选中类型的标注
+    const currentType = this.customAnnotationManager.getCurrentCustomType();
+    if (!currentType) {
+      if (window.PlantAnnotationTool?.showError) {
+        window.PlantAnnotationTool.showError('No Type Selected', 'Please select an Annotation Type before annotating.');
+      }
+      return;
     }
 
-    console.log(`创建无方向标注点 #${keypoint.order} at (${imagePos.x.toFixed(1)}, ${imagePos.y.toFixed(1)})`);
-    console.log(`当前标注点总数: ${this.keypoints.length}, 下一个编号: ${this.findNextAvailableOrder()}`);
+    if (currentType.type === 'region') {
+      // 如果是矩形类型，启动统一的矩形拖拽流程
+      this.startUnifiedCustomRegionDrag(mousePos, currentType.id);
+      return;
+    }
+
+    // Keypoint 类型：使用类型默认角度
+    const direction = typeof currentType.metadata?.defaultAngle === 'number' ? currentType.metadata.defaultAngle : null;
+    const keypoint = this.addCustomPointAnnotation(imagePos.x, imagePos.y, currentType.id);
+    // addCustomPointAnnotation 内部已处理 defaultAngle 应用与保存/渲染/同步
+    return keypoint;
   }
 
   /**
@@ -1867,12 +1909,32 @@ export class AnnotationTool {
     this.crossSectionalMap.clear();
 
     try {
+      // 如果当前选择的类型存在且不支持方向，直接提示并返回
+      if (this.customAnnotationManager) {
+        const t = this.customAnnotationManager.getCurrentCustomType?.();
+        if (t && t.metadata && t.metadata.isDirectional === false) {
+          if (window.PlantAnnotationTool?.showError) {
+            window.PlantAnnotationTool.showError('Auto Direction Disabled', '当前选择的类型未启用方向功能');
+          }
+          return false;
+        }
+      }
       if (this.autoDirectionMode === 'cross-sectional') {
         // 🔧 NEW: Cross-Sectional Mode - Process same order across all images
-        return await this.startCrossSectionalMode();
+        const ok = await this.startCrossSectionalMode();
+        if (!ok) {
+          this.exitAutoDirectionMode();
+          this.resetAutoDirectionButton();
+        }
+        return ok;
       } else {
         // 🔧 EXISTING: Longitudinal Mode - Complete all points in one image first
-        return this.startLongitudinalMode();
+        const ok = this.startLongitudinalMode();
+        if (!ok) {
+          this.exitAutoDirectionMode();
+          this.resetAutoDirectionButton();
+        }
+        return ok;
       }
     } catch (error) {
       console.error('[Auto Direction] Failed to start auto direction mode:', error);
@@ -1969,6 +2031,9 @@ export class AnnotationTool {
       if (window.PlantAnnotationTool?.showInfo) {
         window.PlantAnnotationTool.showInfo('无需设置', '当前图像没有需要设置方向的标注点');
       }
+      // 确保按钮和状态复位
+      this.exitAutoDirectionMode();
+      this.resetAutoDirectionButton();
       return false;
     }
 
@@ -3000,6 +3065,18 @@ export class AnnotationTool {
       return;
     }
 
+    // 🔄 NEW: If in custom mode and a point type is selected, default to that type
+    if (!customTypeId && this.customAnnotationManager && this.customAnnotationManager.isInCustomMode()) {
+      const currentType = this.customAnnotationManager.getCurrentCustomType();
+      if (currentType && (currentType.type === 'point' || currentType.type === 'region')) {
+        customTypeId = currentType.id;
+        // Respect isDirectional: if false, strip direction
+        if (!currentType.metadata || currentType.metadata.isDirectional === false) {
+          direction = null;
+        }
+      }
+    }
+
     // 🔧 FIX: 使用类型特定的序号分配
     const order = customTypeId ? this.findNextAvailableOrderForType(customTypeId) : this.findNextAvailableOrder();
 
@@ -3011,6 +3088,9 @@ export class AnnotationTool {
       normalizedDirection = 0;   // 右侧为0度
     } else if (typeof direction === 'number') {
       normalizedDirection = direction;
+    } else if (direction === undefined) {
+      // 保持 undefined，不写入 direction 字段
+      normalizedDirection = undefined;
     } else {
       normalizedDirection = 0;   // 默认为右侧
     }
@@ -3020,15 +3100,15 @@ export class AnnotationTool {
       x: x,
       y: y,
       timestamp: new Date().toISOString(),
-      direction: normalizedDirection,
-      directionType: 'angle', // 标记为角度类型
+      ...(normalizedDirection !== undefined && { direction: normalizedDirection }),
+      ...(normalizedDirection !== undefined && { directionType: 'angle' }),
       order: order,  // 添加序号字段
       
       // 🔄 NEW: 统一标注系统 - 支持自定义类型
       annotationType: customTypeId ? 'custom' : 'regular',
       ...(customTypeId && { customTypeId }),
-      ...(width && { width }),
-      ...(height && { height })
+      ...(typeof width === 'number' && { width }),
+      ...(typeof height === 'number' && { height })
     };
 
     this.keypoints.push(keypoint);
@@ -3064,7 +3144,17 @@ export class AnnotationTool {
    * 🔄 NEW: 添加自定义点标注（统一到keypoints系统）
    */
   addCustomPointAnnotation(x, y, customTypeId) {
-    return this.addKeypointWithDirection(x, y, null, customTypeId);
+    // Use default angle from type metadata if provided
+    let direction = null;
+    try {
+      const customType = this.getCustomType(customTypeId);
+      if (customType && customType.metadata && typeof customType.metadata.defaultAngle === 'number') {
+        direction = customType.metadata.defaultAngle;
+      }
+    } catch (e) {
+      // Fallback to null (will default to 0° in addKeypointWithDirection)
+    }
+    return this.addKeypointWithDirection(x, y, direction, customTypeId);
   }
   
   /**

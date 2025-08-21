@@ -21,13 +21,7 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     sourcemap: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'vendor': ['vite']
-        }
-      }
-    }
+    // Do not manually include dev-only packages like 'vite' into client bundle
   },
   resolve: {
     alias: {

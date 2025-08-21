@@ -50,6 +50,10 @@ export class CustomAnnotationSettingsController {
     this.typeColorTextInput = document.getElementById('type-color-text');
     this.typeDescriptionInput = document.getElementById('type-description');
     this.typeCategoryInput = document.getElementById('type-category');
+    // Default angle for keypoint types
+    this.typeDefaultAngleGroup = document.getElementById('type-default-angle-group');
+    this.typeDefaultAngleInput = document.getElementById('type-default-angle');
+    this.typeIsDirectionalInput = document.getElementById('type-is-directional');
     
     // Current Mode tab elements
     this.currentModeValue = document.getElementById('current-mode-value');
@@ -111,13 +115,26 @@ export class CustomAnnotationSettingsController {
         this.typeIdInput.value = id;
       }
     });
+
+    // Show/hide default angle field when type changes
+    this.typeTypeSelect.addEventListener('change', () => this.updateAngleVisibility());
     
-    // Current Mode tab events
-    this.switchToNormalBtn.addEventListener('click', () => this.switchToNormalMode());
+    // Current Type events: selection-driven, no buttons
+    if (this.switchToNormalBtn) {
+      this.switchToNormalBtn.style.display = 'none';
+    }
+    if (this.switchToCustomBtn) {
+      this.switchToCustomBtn.style.display = 'none';
+    }
     this.selectCustomTypeSelect.addEventListener('change', () => {
-      this.switchToCustomBtn.disabled = !this.selectCustomTypeSelect.value;
+      const typeId = this.selectCustomTypeSelect.value;
+      if (typeId) {
+        this.customAnnotationManager.setCustomAnnotationMode(typeId);
+      } else {
+        this.customAnnotationManager.setNormalMode();
+      }
+      this.updateModeDisplay();
     });
-    this.switchToCustomBtn.addEventListener('click', () => this.switchToCustomMode());
     
     // Export/Import tab events
     this.exportCustomDataBtn.addEventListener('click', () => this.exportCustomData());
@@ -230,6 +247,7 @@ export class CustomAnnotationSettingsController {
    * 创建类型项HTML
    */
   createTypeItemHTML(type) {
+    const typeLabel = type.type === 'point' ? 'keypoint' : (type.type === 'region' ? 'rectangle' : type.type);
     return `
       <div class="custom-type-item" data-type-id="${type.id}">
         <div class="custom-type-info">
@@ -237,7 +255,7 @@ export class CustomAnnotationSettingsController {
           <div class="type-details">
             <div class="type-name">${type.name}</div>
             <div class="type-meta">
-              <span class="type-badge ${type.type}">${type.type}</span>
+              <span class="type-badge ${type.type}">${typeLabel}</span>
               <span>ID: ${type.id}</span>
               ${type.metadata?.category ? `<span>Category: ${type.metadata.category}</span>` : ''}
             </div>
@@ -275,12 +293,16 @@ export class CustomAnnotationSettingsController {
    */
   showAddTypeForm() {
     this.currentEditingTypeId = null;
-    this.formTitle.textContent = 'Add New Custom Type';
+    this.formTitle.textContent = 'Add New Type';
     this.formSubmitText.textContent = 'Create Type';
     this.typeForm.reset();
     this.typeColorInput.value = '#ff6b35';
     this.typeColorTextInput.value = '#ff6b35';
+    if (this.typeDefaultAngleInput) {
+      this.typeDefaultAngleInput.value = '';
+    }
     this.typeFormSection.style.display = 'block';
+    this.updateAngleVisibility();
   }
 
   /**
@@ -291,7 +313,7 @@ export class CustomAnnotationSettingsController {
     if (!type) return;
     
     this.currentEditingTypeId = typeId;
-    this.formTitle.textContent = 'Edit Custom Type';
+    this.formTitle.textContent = 'Edit Type';
     this.formSubmitText.textContent = 'Update Type';
     
     // Fill form with existing data
@@ -302,11 +324,19 @@ export class CustomAnnotationSettingsController {
     this.typeColorTextInput.value = type.color;
     this.typeDescriptionInput.value = type.description || '';
     this.typeCategoryInput.value = type.metadata?.category || '';
+    if (this.typeDefaultAngleInput) {
+      const angle = type.metadata?.defaultAngle;
+      this.typeDefaultAngleInput.value = (angle ?? '').toString();
+    }
+    if (this.typeIsDirectionalInput) {
+      this.typeIsDirectionalInput.checked = !!type.metadata?.isDirectional;
+    }
     
     // Disable ID field for editing
     this.typeIdInput.disabled = true;
     
     this.typeFormSection.style.display = 'block';
+    this.updateAngleVisibility();
   }
 
   /**
@@ -349,6 +379,24 @@ export class CustomAnnotationSettingsController {
         category: formData.get('category')
       }
     };
+
+    // Directional toggle
+    if (this.typeIsDirectionalInput && this.typeIsDirectionalInput.checked) {
+      typeData.metadata.isDirectional = true;
+    } else {
+      typeData.metadata.isDirectional = false;
+    }
+
+    // Attach default angle for keypoint types
+    if (typeData.type === 'point') {
+      const rawAngle = (this.typeDefaultAngleInput?.value || '').trim();
+      if (rawAngle !== '') {
+        const parsed = parseFloat(rawAngle);
+        if (!Number.isNaN(parsed)) {
+          typeData.metadata.defaultAngle = parsed;
+        }
+      }
+    }
     
     try {
       if (this.currentEditingTypeId) {
@@ -387,11 +435,13 @@ export class CustomAnnotationSettingsController {
     const currentMode = this.customAnnotationManager.currentMode;
     const selectedType = this.customAnnotationManager.getCurrentCustomType();
     
-    this.currentModeValue.textContent = currentMode === 'custom' ? 'Custom' : 'Normal';
+    this.currentModeValue.textContent = currentMode === 'custom' ? 'Type' : 'Off';
     this.currentTypeValue.textContent = selectedType ? selectedType.name : 'None';
     
     // Update button states
-    this.switchToNormalBtn.disabled = currentMode === 'normal';
+    if (this.switchToNormalBtn) {
+      this.switchToNormalBtn.disabled = currentMode === 'normal';
+    }
   }
 
   /**
@@ -400,16 +450,30 @@ export class CustomAnnotationSettingsController {
   refreshCustomTypeSelector() {
     const customTypes = this.customAnnotationManager.getAllCustomTypes();
     
-    this.selectCustomTypeSelect.innerHTML = '<option value="">Choose a custom type...</option>';
+    this.selectCustomTypeSelect.innerHTML = '<option value="">Choose a type...</option>';
     
     customTypes.forEach(type => {
+      // 将内置类型放到列表顶部
       const option = document.createElement('option');
       option.value = type.id;
-      option.textContent = `${type.name} (${type.type})`;
+      const typeLabel = type.type === 'point' ? 'keypoint' : (type.type === 'region' ? 'rectangle' : type.type);
+      const prefix = type.metadata?.builtin ? '★ ' : '';
+      option.textContent = `${prefix}${type.name} (${typeLabel})`;
       this.selectCustomTypeSelect.appendChild(option);
     });
+
+    // 如果列表存在内置类型，将其移到第一项之后
+    const options = Array.from(this.selectCustomTypeSelect.options);
+    const builtinIdx = options.findIndex(opt => opt.value === 'builtin-regular-keypoint');
+    if (builtinIdx > 1) {
+      const opt = options[builtinIdx];
+      this.selectCustomTypeSelect.remove(builtinIdx);
+      this.selectCustomTypeSelect.add(opt, 1);
+    }
     
-    this.switchToCustomBtn.disabled = true;
+    if (this.switchToCustomBtn) {
+      this.switchToCustomBtn.disabled = true;
+    }
   }
 
   /**
@@ -433,6 +497,15 @@ export class CustomAnnotationSettingsController {
     } catch (error) {
       alert(`Error: ${error.message}`);
     }
+  }
+
+  /**
+   * 根据选择的类型显示/隐藏默认角度字段
+   */
+  updateAngleVisibility() {
+    if (!this.typeDefaultAngleGroup) return;
+    const isPoint = this.typeTypeSelect.value === 'point';
+    this.typeDefaultAngleGroup.style.display = isPoint ? 'flex' : 'none';
   }
 
   /**

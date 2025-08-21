@@ -48,7 +48,33 @@ export class CustomAnnotationManager {
     // 加载已保存的数据
     this.loadFromStorage();
     
+    // 🔧 NEW: Ensure builtin regular type exists for migrated data
+    this.ensureBuiltinRegularType();
+    
     console.log('CustomAnnotationManager initialized');
+  }
+
+  /**
+   * 🔧 NEW: 注册内置的“regular”类型（用于迁移后的数据渲染与选择）
+   */
+  ensureBuiltinRegularType() {
+    const builtinId = 'builtin-regular-keypoint';
+    if (!this.customTypes.has(builtinId)) {
+      const builtinType = {
+        id: builtinId,
+        name: 'Regular (Builtin)',
+        type: 'point',
+        color: '#22c55e',
+        description: 'Default keypoint type migrated from regular',
+        metadata: { builtin: true, defaultAngle: 0, isDirectional: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      this.customTypes.set(builtinId, builtinType);
+      // 触发UI更新（不触发远端同步/存储）
+      this.triggerEvent('onTypeCreate', { type: builtinType });
+      console.log('[CustomAnnotationManager] Registered builtin type:', builtinId);
+    }
   }
 
   /**

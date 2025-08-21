@@ -5,6 +5,8 @@
   "type": "module",
   "main": "src/main.js",
   "scripts": {
+    "migrate:regular": "node scripts/migrate-regular-to-builtin.js --dir '/Users/tshoiasc/Brassica napus dataset/dataset/annotations'",
+    "migrate:regular:dry": "node scripts/migrate-regular-to-builtin.js --dry-run --dir '/Users/tshoiasc/Brassica napus dataset/dataset/annotations'",
     "start": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run storage\" \"npm run dev\"",
     "dev": "vite --host",
     "dev:frontend": "vite --host --port 5173",

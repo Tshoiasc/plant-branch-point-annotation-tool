@@ -3833,6 +3833,13 @@ function handleAutoDirectionSelection() {
     return;
   }
 
+  // 额外检查：若当前类型存在且不支持方向，提示并退出
+  const currentType = window.PlantAnnotationTool?.annotationTool?.customAnnotationManager?.getCurrentCustomType?.();
+  if (currentType && currentType.metadata && currentType.metadata.isDirectional === false) {
+    showError('Auto Direction Disabled', '当前选择的类型未启用方向功能');
+    return;
+  }
+
   // 🔧 FIX: Read mode from UI selector before starting auto direction mode
   const modeSelector = document.getElementById('auto-direction-mode-selector');
   if (modeSelector && modeSelector.value) {
