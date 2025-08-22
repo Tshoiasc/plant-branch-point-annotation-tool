@@ -177,7 +177,7 @@ export class BranchPointPreviewManager {
       const pointY = (centerY - cropY) * scaleY;
       
       // 绘制目标标注点（高亮）
-      this.renderLocalizedAnnotation(pointX, pointY, nextOrder, targetAnnotation.direction);
+      this.renderLocalizedAnnotation(pointX, pointY, nextOrder, targetAnnotation.direction, true, targetAnnotation);
       
       // 绘制其他标注点（如果在视图范围内）
       this.previousAnnotations.forEach((annotation) => {
@@ -189,7 +189,7 @@ export class BranchPointPreviewManager {
           
           const otherX = (annotation.x - cropX) * scaleX;
           const otherY = (annotation.y - cropY) * scaleY;
-          this.renderLocalizedAnnotation(otherX, otherY, annotation.order || 0, annotation.direction, false);
+          this.renderLocalizedAnnotation(otherX, otherY, annotation.order || 0, annotation.direction, false, annotation);
         }
       });
       
@@ -578,7 +578,7 @@ export class BranchPointPreviewManager {
       const pointY = (centerY - cropY) * scaleY;
       
       // 绘制目标标注点（高亮）
-      this.renderLocalizedAnnotation(pointX, pointY, nextOrder, targetAnnotation.direction);
+      this.renderLocalizedAnnotation(pointX, pointY, nextOrder, targetAnnotation.direction, true, targetAnnotation);
       
       // 绘制其他标注点（如果在视图范围内）
       annotations.forEach((annotation) => {
@@ -590,7 +590,7 @@ export class BranchPointPreviewManager {
           
           const otherX = (annotation.x - cropX) * scaleX;
           const otherY = (annotation.y - cropY) * scaleY;
-          this.renderLocalizedAnnotation(otherX, otherY, annotation.order || 0, annotation.direction, false);
+          this.renderLocalizedAnnotation(otherX, otherY, annotation.order || 0, annotation.direction, false, annotation);
         }
       });
       
@@ -616,9 +616,23 @@ export class BranchPointPreviewManager {
   }
 
   /**
-   * 渲染局部化的标注点
+   * 渲染局部化的标注点或区域
    */
-  renderLocalizedAnnotation(x, y, label, direction, isTarget = true) {
+  renderLocalizedAnnotation(x, y, label, direction, isTarget = true, annotation = null) {
+    // 确定标注类型（点或区域）
+    let isRegion = false;
+    let annotationWidth = 0;
+    let annotationHeight = 0;
+    
+    if (annotation) {
+      // 检查是否为区域类型
+      if (annotation.width !== undefined && annotation.height !== undefined) {
+        isRegion = true;
+        annotationWidth = annotation.width;
+        annotationHeight = annotation.height;
+      }
+    }
+
     // 根据是否为目标点设置样式
     let fillColor, radius, borderWidth;
 
@@ -626,15 +640,6 @@ export class BranchPointPreviewManager {
       fillColor = '#ffeb3b'; // 黄色高亮
       radius = 5; // 缩小目标圆圈
       borderWidth = 2;
-
-      // 绘制外圈提示（更小的虚线圆圈）
-      this.previewCtx.beginPath();
-      this.previewCtx.arc(x, y, radius + 3, 0, 2 * Math.PI);
-      this.previewCtx.strokeStyle = '#ff9800';
-      this.previewCtx.lineWidth = 1;
-      this.previewCtx.setLineDash([2, 2]);
-      this.previewCtx.stroke();
-      this.previewCtx.setLineDash([]);
     } else {
       // 根据方向类型设置颜色
       if (typeof direction === 'number') {
@@ -646,37 +651,97 @@ export class BranchPointPreviewManager {
       borderWidth = 1;
     }
 
-    // 绘制标注点
-    this.previewCtx.beginPath();
-    this.previewCtx.arc(x, y, radius, 0, 2 * Math.PI);
-    this.previewCtx.fillStyle = fillColor;
-    this.previewCtx.fill();
+    if (isRegion) {
+      // 绘制区域标注
+      const rectWidth = Math.max(10, annotationWidth * 0.1); // 缩放到预览尺寸
+      const rectHeight = Math.max(10, annotationHeight * 0.1);
+      const rectX = x - rectWidth / 2;
+      const rectY = y - rectHeight / 2;
+      
+      // 绘制外圈提示（如果是目标）
+      if (isTarget) {
+        this.previewCtx.strokeStyle = '#ff9800';
+        this.previewCtx.lineWidth = 1;
+        this.previewCtx.setLineDash([2, 2]);
+        this.previewCtx.strokeRect(rectX - 3, rectY - 3, rectWidth + 6, rectHeight + 6);
+        this.previewCtx.setLineDash([]);
+      }
 
-    // 绘制边框
-    this.previewCtx.strokeStyle = '#ffffff';
-    this.previewCtx.lineWidth = borderWidth;
-    this.previewCtx.stroke();
+      // 绘制主区域
+      this.previewCtx.fillStyle = fillColor + '80'; // 半透明填充
+      this.previewCtx.fillRect(rectX, rectY, rectWidth, rectHeight);
 
-    // 绘制方向箭头（如果有方向信息）
-    this.renderDirectionArrow(x, y, direction, isTarget);
+      // 绘制边框
+      this.previewCtx.strokeStyle = '#ffffff';
+      this.previewCtx.lineWidth = borderWidth;
+      this.previewCtx.strokeRect(rectX, rectY, rectWidth, rectHeight);
 
-    // 绘制序号
-    this.previewCtx.fillStyle = isTarget ? '#000000' : '#ffffff';
-    this.previewCtx.font = `bold ${isTarget ? 8 : 6}px Arial`;
-    this.previewCtx.textAlign = 'center';
-    this.previewCtx.textBaseline = 'middle';
-    this.previewCtx.fillText(label.toString(), x, y);
+      // 绘制方向箭头（从区域中心）
+      this.renderDirectionArrow(x, y, direction, isTarget);
 
-    // 如果是目标点，添加小箭头指示
-    if (isTarget) {
-      this.previewCtx.fillStyle = '#ff9800';
-      this.previewCtx.font = 'bold 8px Arial';
-      this.previewCtx.fillText('▼', x, y - radius - 8);
-
-      this.previewCtx.fillStyle = '#ff9800';
-      this.previewCtx.font = 'bold 6px Arial';
+      // 绘制序号（在区域中心）
+      this.previewCtx.fillStyle = isTarget ? '#000000' : '#ffffff';
+      this.previewCtx.font = `bold ${isTarget ? 8 : 6}px Arial`;
       this.previewCtx.textAlign = 'center';
-      this.previewCtx.fillText('Target', x, y + radius + 8);
+      this.previewCtx.textBaseline = 'middle';
+      this.previewCtx.fillText(label.toString(), x, y);
+
+      // 如果是目标区域，添加指示
+      if (isTarget) {
+        this.previewCtx.fillStyle = '#ff9800';
+        this.previewCtx.font = 'bold 8px Arial';
+        this.previewCtx.fillText('▼', x, y - rectHeight / 2 - 8);
+
+        this.previewCtx.fillStyle = '#ff9800';
+        this.previewCtx.font = 'bold 6px Arial';
+        this.previewCtx.textAlign = 'center';
+        this.previewCtx.fillText('Target', x, y + rectHeight / 2 + 8);
+      }
+    } else {
+      // 绘制点标注（原有逻辑）
+      if (isTarget) {
+        // 绘制外圈提示（更小的虚线圆圈）
+        this.previewCtx.beginPath();
+        this.previewCtx.arc(x, y, radius + 3, 0, 2 * Math.PI);
+        this.previewCtx.strokeStyle = '#ff9800';
+        this.previewCtx.lineWidth = 1;
+        this.previewCtx.setLineDash([2, 2]);
+        this.previewCtx.stroke();
+        this.previewCtx.setLineDash([]);
+      }
+
+      // 绘制标注点
+      this.previewCtx.beginPath();
+      this.previewCtx.arc(x, y, radius, 0, 2 * Math.PI);
+      this.previewCtx.fillStyle = fillColor;
+      this.previewCtx.fill();
+
+      // 绘制边框
+      this.previewCtx.strokeStyle = '#ffffff';
+      this.previewCtx.lineWidth = borderWidth;
+      this.previewCtx.stroke();
+
+      // 绘制方向箭头（如果有方向信息）
+      this.renderDirectionArrow(x, y, direction, isTarget);
+
+      // 绘制序号
+      this.previewCtx.fillStyle = isTarget ? '#000000' : '#ffffff';
+      this.previewCtx.font = `bold ${isTarget ? 8 : 6}px Arial`;
+      this.previewCtx.textAlign = 'center';
+      this.previewCtx.textBaseline = 'middle';
+      this.previewCtx.fillText(label.toString(), x, y);
+
+      // 如果是目标点，添加小箭头指示
+      if (isTarget) {
+        this.previewCtx.fillStyle = '#ff9800';
+        this.previewCtx.font = 'bold 8px Arial';
+        this.previewCtx.fillText('▼', x, y - radius - 8);
+
+        this.previewCtx.fillStyle = '#ff9800';
+        this.previewCtx.font = 'bold 6px Arial';
+        this.previewCtx.textAlign = 'center';
+        this.previewCtx.fillText('Target', x, y + radius + 8);
+      }
     }
   }
 
@@ -1096,7 +1161,7 @@ export class BranchPointPreviewManager {
           
           const otherX = (annotation.x - cropX) * scaleX;
           const otherY = (annotation.y - cropY) * scaleY;
-          this.renderLocalizedAnnotation(otherX, otherY, annotation.order || 0, annotation.direction, false);
+          this.renderLocalizedAnnotation(otherX, otherY, annotation.order || 0, annotation.direction, false, annotation);
         }
       });
       

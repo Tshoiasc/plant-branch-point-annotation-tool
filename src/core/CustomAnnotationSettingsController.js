@@ -54,6 +54,7 @@ export class CustomAnnotationSettingsController {
     this.typeDefaultAngleGroup = document.getElementById('type-default-angle-group');
     this.typeDefaultAngleInput = document.getElementById('type-default-angle');
     this.typeIsDirectionalInput = document.getElementById('type-is-directional');
+    this.associateTypeSelect = document.getElementById('associate-type-select');
     
     // Current Mode tab elements
     this.currentModeValue = document.getElementById('current-mode-value');
@@ -115,6 +116,9 @@ export class CustomAnnotationSettingsController {
         this.typeIdInput.value = id;
       }
     });
+
+    // Populate association options when opening form or list refreshes
+    // (called from showAddTypeForm/editCustomType via helper)
 
     // Show/hide default angle field when type changes
     this.typeTypeSelect.addEventListener('change', () => this.updateAngleVisibility());
@@ -240,7 +244,29 @@ export class CustomAnnotationSettingsController {
       
       // Bind action buttons
       this.bindTypeActionButtons();
+
+      // Also refresh associate options if form is visible
+      if (this.typeFormSection && this.typeFormSection.style.display !== 'none' && this.associateTypeSelect) {
+        this.populateAssociateOptions(this.currentEditingTypeId);
+      }
     }
+  }
+
+  /**
+   * 填充关联类型下拉（排除自身）
+   */
+  populateAssociateOptions(currentId) {
+    if (!this.associateTypeSelect) return;
+    const types = this.customAnnotationManager.getAllCustomTypes();
+    this.associateTypeSelect.innerHTML = '<option value="">None</option>';
+    types.forEach(t => {
+      if (t.id === currentId) return;
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      const label = t.type === 'point' ? 'keypoint' : (t.type === 'region' ? 'rectangle' : t.type);
+      opt.textContent = `${t.name} (${label})`;
+      this.associateTypeSelect.appendChild(opt);
+    });
   }
 
   /**
@@ -301,6 +327,10 @@ export class CustomAnnotationSettingsController {
     if (this.typeDefaultAngleInput) {
       this.typeDefaultAngleInput.value = '';
     }
+    if (this.associateTypeSelect) {
+      this.populateAssociateOptions(null);
+      this.associateTypeSelect.value = '';
+    }
     this.typeFormSection.style.display = 'block';
     this.updateAngleVisibility();
   }
@@ -331,9 +361,14 @@ export class CustomAnnotationSettingsController {
     if (this.typeIsDirectionalInput) {
       this.typeIsDirectionalInput.checked = !!type.metadata?.isDirectional;
     }
+    if (this.associateTypeSelect) {
+      this.populateAssociateOptions(typeId);
+      this.associateTypeSelect.value = type.metadata?.associateTypeId || '';
+    }
     
-    // Disable ID field for editing
+    // Disable ID and geometry fields for editing
     this.typeIdInput.disabled = true;
+    this.typeTypeSelect.disabled = true;
     
     this.typeFormSection.style.display = 'block';
     this.updateAngleVisibility();
@@ -360,6 +395,7 @@ export class CustomAnnotationSettingsController {
     this.typeFormSection.style.display = 'none';
     this.currentEditingTypeId = null;
     this.typeIdInput.disabled = false;
+    this.typeTypeSelect.disabled = false;
   }
 
   /**
@@ -386,6 +422,12 @@ export class CustomAnnotationSettingsController {
     } else {
       typeData.metadata.isDirectional = false;
     }
+    // Association selection
+    if (this.associateTypeSelect && this.associateTypeSelect.value) {
+      typeData.metadata.associateTypeId = this.associateTypeSelect.value;
+    } else {
+      delete typeData.metadata.associateTypeId;
+    }
 
     // Attach default angle for keypoint types
     if (typeData.type === 'point') {
@@ -401,7 +443,9 @@ export class CustomAnnotationSettingsController {
     try {
       if (this.currentEditingTypeId) {
         // Update existing type
-        this.customAnnotationManager.updateCustomType(this.currentEditingTypeId, typeData);
+        // Do not allow changing geometry type on update
+        const { type, ...safeUpdate } = typeData;
+        this.customAnnotationManager.updateCustomType(this.currentEditingTypeId, safeUpdate);
       } else {
         // Create new type
         this.customAnnotationManager.createCustomType(typeData);

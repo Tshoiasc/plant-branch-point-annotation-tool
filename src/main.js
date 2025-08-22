@@ -459,6 +459,12 @@ function bindEventListeners() {
   if (autoDirectionModeSelector) {
     autoDirectionModeSelector.addEventListener('change', handleAutoDirectionModeChange);
   }
+  
+  // 🔧 NEW: Auto Order Button
+  const autoOrderBtn = document.getElementById('auto-order-btn');
+  if (autoOrderBtn) {
+    autoOrderBtn.addEventListener('click', handleAutoOrderClick);
+  }
 
   // 锁定倍数控件
   const zoomLockCheckbox = document.getElementById('zoom-lock-checkbox');
@@ -1123,6 +1129,10 @@ async function loadImageNoteCount(plantId, imageId) {
 // 🔧 FIX: 将加载图像笔记计数函数暴露到全局，供NoteUI调用
 window.loadImageNoteCount = loadImageNoteCount;
 
+// 🔧 FIX: 将导航函数暴露到全局，供Auto Order功能调用
+window.navigateToNextImage = navigateToNextImage;
+window.navigateToPreviousImage = navigateToPreviousImage;
+
 /**
  * 获取状态图标
  */
@@ -1737,6 +1747,9 @@ async function handleImageSelect(image, isImageSwitch = true) {
       console.log(`[调试] isImageSwitch: ${isImageSwitch}, isFirstImageForPlant: ${isFirstImageForPlant}, shouldPreserveView: ${shouldPreserveView}`);
       
       await annotationTool.loadImage(image, shouldPreserveView);
+
+      // 更新SIFT按钮状态
+      updateSiftButtonState();
 
       // 应用锁定倍数设置或确保首张图像适合屏幕
       if (isFirstImageForPlant) {
@@ -2533,6 +2546,19 @@ function handleKeyboardShortcuts(event) {
   // 🔧 NEW: SIFT匹配快捷键 (Shift+S)
   if (event.shiftKey && event.key.toLowerCase() === 's') {
     event.preventDefault();
+    // 检查当前选中的AnnotationType是否为builtin
+    if (annotationTool) {
+      let isBuiltinSelected = false;
+      if (annotationTool.customAnnotationManager) {
+        const currentMode = annotationTool.customAnnotationManager.currentMode;
+        const selectedTypeId = annotationTool.customAnnotationManager.selectedCustomType;
+        isBuiltinSelected = (currentMode === 'custom' && selectedTypeId === 'builtin-regular-keypoint');
+      }
+      if (!isBuiltinSelected) {
+        showError('SIFT匹配不可用', 'SIFT匹配仅支持Regular (Builtin)标注，请先选择该类型');
+        return;
+      }
+    }
     handleSiftMatch();
     return;
   }
@@ -2542,7 +2568,12 @@ function handleKeyboardShortcuts(event) {
     switch (event.key) {
       case 'Enter':
         event.preventDefault();
-        handleCompletePlant();
+        // 🔧 NEW: Auto Order模式下的Enter键处理
+        if (annotationTool && annotationTool.state.isAutoOrderMode) {
+          annotationTool.advanceToNextOrderNumber(); // 让它异步执行
+        } else {
+          handleCompletePlant();
+        }
         break;
       case 'ArrowLeft':
         event.preventDefault();
@@ -4435,6 +4466,35 @@ function handleAutoDirectionModeChange() {
 }
 
 /**
+ * 🔧 NEW: Handle auto order button click
+ */
+function handleAutoOrderClick() {
+  if (!annotationTool) {
+    showError('自动排序失败', '标注工具未初始化');
+    return;
+  }
+  
+  // 检查是否选择了annotation type
+  if (!annotationTool.customAnnotationManager || !annotationTool.customAnnotationManager.isInCustomMode()) {
+    showError('自动排序不可用', '请先选择一个标注类型');
+    return;
+  }
+  
+  const currentType = annotationTool.customAnnotationManager.getCurrentCustomType();
+  if (!currentType) {
+    showError('自动排序不可用', '请先选择一个标注类型');
+    return;
+  }
+  
+  // 启动或停止auto order模式
+  if (annotationTool.state.isAutoOrderMode) {
+    annotationTool.stopAutoOrderMode();
+  } else {
+    annotationTool.startAutoOrderMode(currentType.id);
+  }
+}
+
+/**
  * 获取自动切换设置
  */
 function getAutoMoveSettings() {
@@ -5418,6 +5478,19 @@ async function handleSiftMatch() {
     return;
   }
   
+  // 检查当前选中的AnnotationType是否为builtin
+  let isBuiltinSelected = false;
+  if (annotationTool.customAnnotationManager) {
+    const currentMode = annotationTool.customAnnotationManager.currentMode;
+    const selectedTypeId = annotationTool.customAnnotationManager.selectedCustomType;
+    isBuiltinSelected = (currentMode === 'custom' && selectedTypeId === 'builtin-regular-keypoint');
+  }
+  
+  if (!isBuiltinSelected) {
+    showError('SIFT匹配不可用', 'SIFT匹配仅支持Regular (Builtin)标注，请先选择该类型');
+    return;
+  }
+  
   // 禁用SIFT按钮防止重复点击
   const siftBtn = document.getElementById('sift-match-btn');
   if (siftBtn) {
@@ -5442,6 +5515,33 @@ async function handleSiftMatch() {
     }
   }
 }
+
+/**
+ * 更新SIFT按钮状态
+ */
+function updateSiftButtonState() {
+  const siftBtn = document.getElementById('sift-match-btn');
+  if (!siftBtn || !annotationTool) return;
+  
+  // 检查当前选中的AnnotationType是否为builtin
+  let isBuiltinSelected = false;
+  if (annotationTool.customAnnotationManager) {
+    const currentMode = annotationTool.customAnnotationManager.currentMode;
+    const selectedTypeId = annotationTool.customAnnotationManager.selectedCustomType;
+    isBuiltinSelected = (currentMode === 'custom' && selectedTypeId === 'builtin-regular-keypoint');
+  }
+  
+  // 更新按钮状态
+  siftBtn.disabled = !isBuiltinSelected;
+  siftBtn.style.opacity = isBuiltinSelected ? '1' : '0.5';
+  siftBtn.style.cursor = isBuiltinSelected ? 'pointer' : 'not-allowed';
+  siftBtn.title = isBuiltinSelected ? 
+    'SIFT快捷匹配 (Shift+S)' : 
+    'SIFT匹配仅支持Regular (Builtin)标注，请先选择该类型';
+}
+
+// 暴露到window对象供其他模块调用
+window.updateSiftButtonState = updateSiftButtonState;
 
 /**
  * 🔧 REMOVED: Handle spreading clear (Shift+Click) 

@@ -1847,6 +1847,29 @@ body {
   background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
 }
 
+/* 自动化排序按钮 */
+.btn-info {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.btn-info:hover {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.btn-info.active {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  animation: pulse 2s infinite;
+}
+
+.btn-info.active:hover {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+}
+
 @keyframes pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);

@@ -191,6 +191,11 @@
                       <option value="cross-sectional">Vertical (Order by Order) - Complete order #1 across all images, then order #2</option>
                     </select>
                   </div>
+                  <div class="auto-order-controls" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <button id="auto-order-btn" class="btn btn-small btn-info" title="Start automated order assignment">Auto Order</button>
+                    <span id="auto-order-status" class="status-text" style="font-size: 12px; color: #666;"></span>
+                  </div>
+
                   <div id="auto-direction-progress" class="progress-indicator" style="display: none;">
                     <div class="progress-text">
                       <span id="progress-current">0</span>/<span id="progress-total">0</span> 
@@ -758,6 +763,17 @@
                       <span>Directional (angle)</span>
                     </label>
                     <small>When enabled, this type supports direction selection and rendering</small>
+                  </div>
+                </div>
+
+                <!-- Association group (optional) -->
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="associate-type-select">Associate to Parent Type</label>
+                    <select id="associate-type-select">
+                      <option value="">None</option>
+                    </select>
+                    <small>When set, each annotation can bind to a parent annotation (by order) from this type</small>
                   </div>
                 </div>
 

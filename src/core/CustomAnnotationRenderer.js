@@ -49,6 +49,8 @@ export class CustomAnnotationRenderer {
     this.dragStartPosition = null;
     this.dragCurrentPosition = null;
     this.isDragging = false;
+    this.dragMode = 'move'; // 'move' | 'resize'
+    this.dragHandle = null; // 'n','s','e','w','ne','nw','se','sw'
     
     console.log('CustomAnnotationRenderer initialized');
   }
@@ -103,12 +105,12 @@ export class CustomAnnotationRenderer {
     
     // 按类型分组渲染
     const pointAnnotations = annotations.filter(ann => {
-      const type = this.customAnnotationManager.getCustomType(ann.typeId);
+      const type = this.customAnnotationManager.getCustomType(ann.typeId || ann.customTypeId);
       return type?.type === 'point';
     });
     
     const regionAnnotations = annotations.filter(ann => {
-      const type = this.customAnnotationManager.getCustomType(ann.typeId);
+      const type = this.customAnnotationManager.getCustomType(ann.typeId || ann.customTypeId);
       return type?.type === 'region';
     });
     
@@ -129,7 +131,8 @@ export class CustomAnnotationRenderer {
    * 渲染点标注
    */
   renderPointAnnotation(annotation, displayStrategy) {
-    const customType = this.customAnnotationManager.getCustomType(annotation.typeId);
+    const typeId = annotation.typeId || annotation.customTypeId;
+    const customType = this.customAnnotationManager.getCustomType(typeId);
     if (!customType) return;
     
     const screenPos = this.annotationTool.imageToScreen(annotation.x, annotation.y);
@@ -181,7 +184,8 @@ export class CustomAnnotationRenderer {
    * 渲染区域标注
    */
   renderRegionAnnotation(annotation, displayStrategy) {
-    const customType = this.customAnnotationManager.getCustomType(annotation.typeId);
+    const typeId = annotation.typeId || annotation.customTypeId;
+    const customType = this.customAnnotationManager.getCustomType(typeId);
     if (!customType) return;
     
     const topLeft = this.annotationTool.imageToScreen(annotation.x, annotation.y);
@@ -234,6 +238,77 @@ export class CustomAnnotationRenderer {
     }
     
     this.ctx.restore();
+
+    // 只在选中状态时绘制 resize 手柄
+    if (this.selectedAnnotation === annotation) {
+      // 绘制 resize 手柄（根据缩放调整大小）
+      // 放大命中与可视尺寸，提升可点中性
+      const handleSize = Math.max(8, Math.min(14, 10 * (displayStrategy?.scale || 1)));
+      const half = handleSize / 2;
+      const corners = [
+        { x: topLeft.x, y: topLeft.y }, // nw
+        { x: topLeft.x + screenWidth, y: topLeft.y }, // ne
+        { x: topLeft.x, y: topLeft.y + screenHeight }, // sw
+        { x: topLeft.x + screenWidth, y: topLeft.y + screenHeight } // se
+      ];
+      const edges = [
+        { x: topLeft.x + screenWidth / 2, y: topLeft.y }, // n
+        { x: topLeft.x + screenWidth / 2, y: topLeft.y + screenHeight }, // s
+        { x: topLeft.x, y: topLeft.y + screenHeight / 2 }, // w
+        { x: topLeft.x + screenWidth, y: topLeft.y + screenHeight / 2 } // e
+      ];
+
+      this.ctx.save();
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.strokeStyle = customType.color;
+      this.ctx.lineWidth = 1.5;
+      // corners
+      corners.forEach(pt => {
+        this.ctx.fillRect(pt.x - half, pt.y - half, handleSize, handleSize);
+        this.ctx.strokeRect(pt.x - half, pt.y - half, handleSize, handleSize);
+      });
+      // edges
+      edges.forEach(pt => {
+        this.ctx.fillRect(pt.x - half, pt.y - half, handleSize, handleSize);
+        this.ctx.strokeRect(pt.x - half, pt.y - half, handleSize, handleSize);
+      });
+      this.ctx.restore();
+    }
+  }
+
+  /**
+   * 命中测试：返回区域手柄类型或 null
+   */
+  getRegionHandleAt(screenPos, annotation) {
+    // 统一存储兼容：既支持旧的 typeId，也支持统一系统的 customTypeId
+    const typeId = annotation.typeId || annotation.customTypeId;
+    const customType = this.customAnnotationManager.getCustomType(typeId);
+    if (!customType || customType.type !== 'region') return null;
+    const topLeft = this.annotationTool.imageToScreen(annotation.x, annotation.y);
+    const bottomRight = this.annotationTool.imageToScreen(annotation.x + annotation.width, annotation.y + annotation.height);
+    const center = { x: (topLeft.x + bottomRight.x) / 2, y: (topLeft.y + bottomRight.y) / 2 };
+    const scale = this.annotationTool.state.scale || 1;
+    // 与渲染一致，适度放大命中盒
+    const size = Math.max(8, Math.min(14, 10 * scale));
+    const half = size / 2;
+
+    function hit(pt) {
+      return Math.abs(screenPos.x - pt.x) <= half && Math.abs(screenPos.y - pt.y) <= half;
+    }
+
+    // corners
+    if (hit(topLeft)) return 'nw';
+    if (hit({ x: bottomRight.x, y: topLeft.y })) return 'ne';
+    if (hit({ x: topLeft.x, y: bottomRight.y })) return 'sw';
+    if (hit(bottomRight)) return 'se';
+
+    // edges
+    if (hit({ x: center.x, y: topLeft.y })) return 'n';
+    if (hit({ x: center.x, y: bottomRight.y })) return 's';
+    if (hit({ x: topLeft.x, y: center.y })) return 'w';
+    if (hit({ x: bottomRight.x, y: center.y })) return 'e';
+
+    return null;
   }
 
   /**
@@ -344,7 +419,8 @@ export class CustomAnnotationRenderer {
    * 检查点是否在标注内
    */
   isPointInAnnotation(screenPos, annotation) {
-    const customType = this.customAnnotationManager.getCustomType(annotation.typeId);
+    const typeId = annotation.typeId || annotation.customTypeId;
+    const customType = this.customAnnotationManager.getCustomType(typeId);
     if (!customType) return false;
     
     const displayStrategy = this.getCustomAnnotationDisplayStrategy();
@@ -560,7 +636,7 @@ export class CustomAnnotationRenderer {
   /**
    * 开始拖拽自定义标注
    */
-  startDrag(annotation, screenPosition) {
+  startDrag(annotation, screenPosition, handle = null) {
     this.draggedAnnotation = annotation;
     this.dragStartPosition = {
       screen: screenPosition,
@@ -573,6 +649,8 @@ export class CustomAnnotationRenderer {
     };
     this.dragCurrentPosition = screenPosition;
     this.isDragging = true;
+    this.dragHandle = handle;
+    this.dragMode = handle ? 'resize' : 'move';
     
     console.log('Started dragging custom annotation:', annotation.id);
   }
@@ -594,13 +672,62 @@ export class CustomAnnotationRenderer {
     // 转换为图像坐标偏移
     const imageDeltaX = deltaX / this.annotationTool.state.scale;
     const imageDeltaY = deltaY / this.annotationTool.state.scale;
-    
-    // 更新标注位置
-    this.draggedAnnotation.x = this.dragStartPosition.annotation.x + imageDeltaX;
-    this.draggedAnnotation.y = this.dragStartPosition.annotation.y + imageDeltaY;
-    
-    // 确保标注保持在图像边界内
-    this.constrainAnnotationPosition(this.draggedAnnotation);
+    const a = this.draggedAnnotation;
+    const start = this.dragStartPosition.annotation;
+
+    if (this.dragMode === 'resize' && start.width && start.height) {
+      // 以不同手柄调整矩形
+      let x = start.x;
+      let y = start.y;
+      let w = start.width;
+      let h = start.height;
+
+      switch (this.dragHandle) {
+        case 'n':
+          y = start.y + imageDeltaY;
+          h = start.height - imageDeltaY;
+          break;
+        case 's':
+          h = start.height + imageDeltaY;
+          break;
+        case 'w':
+          x = start.x + imageDeltaX;
+          w = start.width - imageDeltaX;
+          break;
+        case 'e':
+          w = start.width + imageDeltaX;
+          break;
+        case 'nw':
+          x = start.x + imageDeltaX; w = start.width - imageDeltaX;
+          y = start.y + imageDeltaY; h = start.height - imageDeltaY;
+          break;
+        case 'ne':
+          y = start.y + imageDeltaY; h = start.height - imageDeltaY;
+          w = start.width + imageDeltaX;
+          break;
+        case 'sw':
+          x = start.x + imageDeltaX; w = start.width - imageDeltaX;
+          h = start.height + imageDeltaY;
+          break;
+        case 'se':
+          w = start.width + imageDeltaX;
+          h = start.height + imageDeltaY;
+          break;
+      }
+
+      // 最小尺寸约束（图像坐标）
+      const minSize = 2 / this.annotationTool.state.scale; // 至少 ~2px 屏幕
+      w = Math.max(minSize, w);
+      h = Math.max(minSize, h);
+
+      a.x = x; a.y = y; a.width = w; a.height = h;
+      this.constrainAnnotationPosition(a);
+    } else {
+      // 移动
+      a.x = start.x + imageDeltaX;
+      a.y = start.y + imageDeltaY;
+      this.constrainAnnotationPosition(a);
+    }
     
     return true;
   }
@@ -618,7 +745,9 @@ export class CustomAnnotationRenderer {
     
     // 检查是否有实际移动
     const moved = Math.abs(draggedAnnotation.x - startPosition.annotation.x) > 1 ||
-                  Math.abs(draggedAnnotation.y - startPosition.annotation.y) > 1;
+                  Math.abs(draggedAnnotation.y - startPosition.annotation.y) > 1 ||
+                  (startPosition.annotation.width && Math.abs((draggedAnnotation.width || 0) - startPosition.annotation.width) > 1) ||
+                  (startPosition.annotation.height && Math.abs((draggedAnnotation.height || 0) - startPosition.annotation.height) > 1);
     
     // 清除拖拽状态
     this.draggedAnnotation = null;
@@ -703,7 +832,8 @@ export class CustomAnnotationRenderer {
   renderDragPreview(displayStrategy) {
     if (!this.isDragging || !this.draggedAnnotation) return;
     
-    const customType = this.customAnnotationManager.getCustomType(this.draggedAnnotation.typeId);
+    const typeId = this.draggedAnnotation.typeId || this.draggedAnnotation.customTypeId;
+    const customType = this.customAnnotationManager.getCustomType(typeId);
     if (!customType) return;
     
     // 绘制拖拽预览（半透明）

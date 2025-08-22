@@ -75,7 +75,14 @@ export class AnnotationTool {
       // 新增：自定义区域拖拽状态
       isCustomRegionDragging: false,       // 是否正在拖拽自定义区域
       customRegionStartPoint: null,        // 区域拖拽开始点
-      customRegionCurrentPoint: null       // 区域拖拽当前点
+      customRegionCurrentPoint: null,      // 区域拖拽当前点
+      // 新增：Auto Order状态
+      isAutoOrderMode: false,              // 是否处于自动排序模式
+      autoOrderTypeId: null,               // 当前自动排序的类型ID
+      autoOrderCurrentOrder: 1,            // 当前正在排序的order号
+      autoOrderImages: [],                 // 需要排序的图片列表
+      autoOrderCurrentImageIndex: 0,       // 当前图片索引
+      isUnorderedMode: false               // 无序号标注模式
     };
     
     // 图像相关
@@ -653,6 +660,8 @@ export class AnnotationTool {
     this.renderSingleKeypoint(screenPos.x, screenPos.y, fillColor, displayOrder, keypoint.direction, displayStrategy, keypoint);
 
     // 🔧 NEW: 绘制多方向箭头（如果有多个方向）
+    // 确保方向数组规范
+    this.ensureMultiDirectionSupport(keypoint);
     if (keypoint.directions && keypoint.directions.length > 1) {
       this.renderMultipleDirections(keypoint);
     } else {
@@ -671,15 +680,18 @@ export class AnnotationTool {
       return;
     }
     
-    // 确定透明度
+    // 确定透明度和边框（悬停和选中状态）
     const isHovered = this.hoveredKeypoint === keypoint;
     const isSelected = this.state.selectedKeypoint === keypoint;
     let alpha = 1;
+    let strokeWidth = displayStrategy.borderWidth;
     
     if (isSelected) {
       alpha = 0.9;
+      strokeWidth = displayStrategy.borderWidth + 1; // 选中时边框加粗
     } else if (isHovered) {
       alpha = 0.8;
+      strokeWidth = displayStrategy.borderWidth + 0.5; // 悬停时边框稍粗
     }
     
     this.ctx.save();
@@ -687,10 +699,10 @@ export class AnnotationTool {
     
     if (keypoint.width && keypoint.height) {
       // 渲染区域标注
-      this.renderCustomRegion(keypoint, screenPos, customType, displayStrategy);
+      this.renderCustomRegion(keypoint, screenPos, customType, {...displayStrategy, borderWidth: strokeWidth});
     } else {
-      // 渲染点标注
-      this.renderCustomPoint(keypoint, screenPos, customType, displayStrategy);
+      // 渲染点标注  
+      this.renderCustomPoint(keypoint, screenPos, customType, {...displayStrategy, borderWidth: strokeWidth});
     }
     
     this.ctx.restore();
@@ -700,9 +712,18 @@ export class AnnotationTool {
    * 🔄 NEW: 渲染自定义点标注
    */
   renderCustomPoint(keypoint, screenPos, customType, displayStrategy) {
+    // 检查选中和悬停状态以调整大小
+    const isSelected = (this.state.selectedKeypoint === keypoint) || 
+                      (this.customAnnotationRenderer?.selectedAnnotation === keypoint);
+    const isHovered = this.hoveredKeypoint === keypoint;
+    
+    // 悬停和选中时稍微增大半径
+    const radius = isSelected ? displayStrategy.radius + 2 : 
+                  (isHovered ? displayStrategy.radius + 1 : displayStrategy.radius);
+    
     // 绘制点
     this.ctx.beginPath();
-    this.ctx.arc(screenPos.x, screenPos.y, displayStrategy.radius, 0, 2 * Math.PI);
+    this.ctx.arc(screenPos.x, screenPos.y, radius, 0, 2 * Math.PI);
     this.ctx.fillStyle = customType.color;
     this.ctx.fill();
     
@@ -711,21 +732,30 @@ export class AnnotationTool {
     this.ctx.lineWidth = displayStrategy.borderWidth;
     this.ctx.stroke();
     
-    // 绘制标签
-    if (displayStrategy.showInternalLabel) {
+    // 绘制标签（只有有序号时才显示）
+    if (displayStrategy.showInternalLabel && keypoint.order !== undefined && keypoint.order !== null) {
       this.ctx.fillStyle = '#ffffff';
       this.ctx.font = `bold ${displayStrategy.fontSize}px Arial`;
       this.ctx.textAlign = 'center';
       this.ctx.textBaseline = 'middle';
       this.ctx.fillText(keypoint.order.toString(), screenPos.x, screenPos.y);
-    } else if (displayStrategy.showExternalLabel) {
+    } else if (displayStrategy.showExternalLabel && keypoint.order !== undefined && keypoint.order !== null) {
       this.renderCustomPointLabel(keypoint, screenPos, customType, displayStrategy);
     }
 
+    // 确保方向数组规范
+    this.ensureMultiDirectionSupport(keypoint);
     // 绘制方向指示（默认开启；仅当显式为 false 时关闭）
     if (!(customType && customType.metadata && customType.metadata.isDirectional === false)) {
-      this.renderDirectionIndicator(screenPos.x, screenPos.y, keypoint.direction, keypoint);
+      if (keypoint.directions && keypoint.directions.length > 1) {
+        this.renderMultipleDirections(keypoint);
+      } else {
+        this.renderDirectionIndicator(screenPos.x, screenPos.y, keypoint.direction, keypoint);
+      }
     }
+
+    // 如果存在父绑定，绘制虚线到父节点
+    this.renderParentLinkIfAny(keypoint, customType);
   }
   
   /**
@@ -741,22 +771,28 @@ export class AnnotationTool {
     const screenWidth = bottomRightScreen.x - screenPos.x;
     const screenHeight = bottomRightScreen.y - screenPos.y;
     
-    // 绘制填充区域
+    // 检查选中状态以决定高亮
+    const isSelected = (this.state.selectedKeypoint === keypoint) || 
+                      (this.customAnnotationRenderer?.selectedAnnotation === keypoint);
+    const isHovered = this.hoveredKeypoint === keypoint;
+    
+    // 绘制填充区域（悬停和选中时有不同透明度）
     this.ctx.fillStyle = customType.color;
-    this.ctx.globalAlpha = 0.2;
+    this.ctx.globalAlpha = isSelected ? 0.4 : (isHovered ? 0.3 : 0.2); // 选中>悬停>默认
     this.ctx.fillRect(screenPos.x, screenPos.y, screenWidth, screenHeight);
     
-    // 绘制边框
+    // 绘制边框（选中时加粗，悬停时稍粗）
     this.ctx.globalAlpha = 1.0;
     this.ctx.strokeStyle = customType.color;
-    this.ctx.lineWidth = displayStrategy.borderWidth;
+    this.ctx.lineWidth = isSelected ? (displayStrategy.borderWidth + 2) : 
+                        (isHovered ? (displayStrategy.borderWidth + 1) : displayStrategy.borderWidth);
     this.ctx.strokeRect(screenPos.x, screenPos.y, screenWidth, screenHeight);
     
     // 绘制标签（在中心）
     const centerX = screenPos.x + screenWidth / 2;
     const centerY = screenPos.y + screenHeight / 2;
     
-    if (displayStrategy.showInternalLabel && Math.min(screenWidth, screenHeight) > 20) {
+    if (displayStrategy.showInternalLabel && Math.min(screenWidth, screenHeight) > 20 && keypoint.order !== undefined && keypoint.order !== null) {
       this.ctx.fillStyle = customType.color;
       this.ctx.font = `bold ${displayStrategy.fontSize}px Arial`;
       this.ctx.textAlign = 'center';
@@ -764,19 +800,155 @@ export class AnnotationTool {
       this.ctx.fillText(keypoint.order.toString(), centerX, centerY);
     }
     
-    if (displayStrategy.showExternalLabel) {
+    if (displayStrategy.showExternalLabel && keypoint.order !== undefined && keypoint.order !== null) {
       this.renderCustomRegionLabel(keypoint, { x: centerX, y: screenPos.y }, customType, displayStrategy);
     }
 
+    // 确保方向数组规范
+    this.ensureMultiDirectionSupport(keypoint);
     // 绘制方向指示（矩形中心为锚点；默认开启，除非 isDirectional === false）
     if (!(customType && customType.metadata && customType.metadata.isDirectional === false)) {
-      this.renderDirectionIndicator(
-        centerX,
-        centerY,
-        keypoint.direction,
-        keypoint
-      );
+      if (keypoint.directions && keypoint.directions.length > 1) {
+        // 对于矩形，使用中心点渲染多方向箭头
+        const backup = { x: keypoint.x, y: keypoint.y };
+        // 临时以中心为锚点渲染
+        const centerKeypoint = { ...keypoint, x: keypoint.x + keypoint.width / 2, y: keypoint.y + keypoint.height / 2 };
+        this.renderMultipleDirections(centerKeypoint);
+      } else {
+        this.renderDirectionIndicator(
+          centerX,
+          centerY,
+          keypoint.direction,
+          keypoint
+        );
+      }
     }
+
+    // 如果存在父绑定，绘制虚线到父节点（中心点坐标转换为图像坐标）
+    const centerImageX = keypoint.x + keypoint.width / 2;
+    const centerImageY = keypoint.y + keypoint.height / 2;
+    this.renderParentLinkIfAny(keypoint, customType, centerImageX, centerImageY);
+    
+    // 如果是选中状态，绘制resize handles
+    const isRegionSelected = (this.state.selectedKeypoint === keypoint) || 
+                             (this.customAnnotationRenderer?.selectedAnnotation === keypoint);
+    if (isRegionSelected) {
+      this.renderRegionResizeHandles(keypoint, screenPos, screenWidth, screenHeight, customType);
+    }
+  }
+
+  /**
+   * 渲染区域resize handles
+   */
+  renderRegionResizeHandles(keypoint, screenPos, screenWidth, screenHeight, customType) {
+    // 计算handle大小（随缩放调整）
+    const handleSize = Math.max(8, Math.min(14, 10 * this.state.scale));
+    const half = handleSize / 2;
+    
+    // 计算8个handle的位置
+    const corners = [
+      { x: screenPos.x, y: screenPos.y }, // nw
+      { x: screenPos.x + screenWidth, y: screenPos.y }, // ne
+      { x: screenPos.x, y: screenPos.y + screenHeight }, // sw
+      { x: screenPos.x + screenWidth, y: screenPos.y + screenHeight } // se
+    ];
+    const edges = [
+      { x: screenPos.x + screenWidth / 2, y: screenPos.y }, // n
+      { x: screenPos.x + screenWidth / 2, y: screenPos.y + screenHeight }, // s
+      { x: screenPos.x, y: screenPos.y + screenHeight / 2 }, // w
+      { x: screenPos.x + screenWidth, y: screenPos.y + screenHeight / 2 } // e
+    ];
+
+    this.ctx.save();
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.strokeStyle = customType.color;
+    this.ctx.lineWidth = 1.5;
+    
+    // 绘制角落handles
+    corners.forEach(pt => {
+      this.ctx.fillRect(pt.x - half, pt.y - half, handleSize, handleSize);
+      this.ctx.strokeRect(pt.x - half, pt.y - half, handleSize, handleSize);
+    });
+    
+    // 绘制边缘handles
+    edges.forEach(pt => {
+      this.ctx.fillRect(pt.x - half, pt.y - half, handleSize, handleSize);
+      this.ctx.strokeRect(pt.x - half, pt.y - half, handleSize, handleSize);
+    });
+    
+    this.ctx.restore();
+  }
+
+  /**
+   * 检测鼠标位置是否在区域resize handle上
+   */
+  getRegionHandleAt(mousePos, annotation) {
+    if (!annotation.width || !annotation.height) return null;
+    
+    const topLeft = this.imageToScreen(annotation.x, annotation.y);
+    const bottomRight = this.imageToScreen(
+      annotation.x + annotation.width,
+      annotation.y + annotation.height
+    );
+    
+    const screenWidth = bottomRight.x - topLeft.x;
+    const screenHeight = bottomRight.y - topLeft.y;
+    
+    // Handle大小（与渲染时一致）
+    const handleSize = Math.max(8, Math.min(14, 10 * this.state.scale));
+    const half = handleSize / 2;
+    
+    // 检测函数
+    function hit(pt) {
+      return Math.abs(mousePos.x - pt.x) <= half && Math.abs(mousePos.y - pt.y) <= half;
+    }
+    
+    // 检测角落handles
+    if (hit({ x: topLeft.x, y: topLeft.y })) return 'nw';
+    if (hit({ x: topLeft.x + screenWidth, y: topLeft.y })) return 'ne';
+    if (hit({ x: topLeft.x, y: topLeft.y + screenHeight })) return 'sw';
+    if (hit({ x: topLeft.x + screenWidth, y: topLeft.y + screenHeight })) return 'se';
+    
+    // 检测边缘handles
+    if (hit({ x: topLeft.x + screenWidth / 2, y: topLeft.y })) return 'n';
+    if (hit({ x: topLeft.x + screenWidth / 2, y: topLeft.y + screenHeight })) return 's';
+    if (hit({ x: topLeft.x, y: topLeft.y + screenHeight / 2 })) return 'w';
+    if (hit({ x: topLeft.x + screenWidth, y: topLeft.y + screenHeight / 2 })) return 'e';
+    
+    return null;
+  }
+
+  /**
+   * 如果标注存在父绑定，则绘制虚线连线
+   */
+  renderParentLinkIfAny(keypoint, customType, originX = null, originY = null) {
+    if (!keypoint.parentAnnotationType || !keypoint.parentAnnotationId) return;
+    const parentTypeId = keypoint.parentAnnotationType;
+    const parentOrder = keypoint.parentAnnotationId;
+    const parent = this.keypoints.find(kp => kp.annotationType === 'custom' && kp.customTypeId === parentTypeId && kp.order === parentOrder);
+    if (!parent) return;
+
+    const fromX = originX !== null ? originX : keypoint.x;
+    const fromY = originY !== null ? originY : keypoint.y;
+    const from = this.imageToScreen(fromX, fromY);
+    let toX = parent.x;
+    let toY = parent.y;
+    if (parent.width && parent.height) {
+      toX = parent.x + parent.width / 2;
+      toY = parent.y + parent.height / 2;
+    }
+    const to = this.imageToScreen(toX, toY);
+
+    this.ctx.save();
+    this.ctx.strokeStyle = '#9ca3af';
+    this.ctx.lineWidth = 2;
+    this.ctx.setLineDash([6, 6]);
+    this.ctx.beginPath();
+    this.ctx.moveTo(from.x, from.y);
+    this.ctx.lineTo(to.x, to.y);
+    this.ctx.stroke();
+    this.ctx.setLineDash([]);
+    this.ctx.restore();
   }
   
   /**
@@ -787,8 +959,10 @@ export class AnnotationTool {
     
     this.ctx.save();
     
-    // 创建标签文本
-    const labelText = `${customType.name} #${keypoint.order}`;
+    // 创建标签文本（有序号时显示序号，无序号时只显示类型名）
+    const labelText = keypoint.order !== undefined && keypoint.order !== null 
+      ? `${customType.name} #${keypoint.order}`
+      : customType.name;
     this.ctx.font = `${displayStrategy.fontSize}px Arial`;
     const textMetrics = this.ctx.measureText(labelText);
     const textWidth = textMetrics.width;
@@ -820,8 +994,10 @@ export class AnnotationTool {
     
     this.ctx.save();
     
-    // 创建标签文本
-    const labelText = `${customType.name} #${keypoint.order}`;
+    // 创建标签文本（有序号时显示序号，无序号时只显示类型名）
+    const labelText = keypoint.order !== undefined && keypoint.order !== null 
+      ? `${customType.name} #${keypoint.order}`
+      : customType.name;
     this.ctx.font = `${displayStrategy.fontSize}px Arial`;
     const textMetrics = this.ctx.measureText(labelText);
     const textWidth = textMetrics.width;
@@ -1175,23 +1351,118 @@ export class AnnotationTool {
         this.state.isPanning = true;
         this.state.lastPanPoint = mousePos;
         this.canvas.style.cursor = 'grabbing';
-      } else {
+      } else if (event.metaKey || event.ctrlKey) {
+        // Cmd/Ctrl + 左键：无序号标注模式
+        this.state.isUnorderedMode = true;
+        console.log('[调试] 进入无序号标注模式');
+        // 继续执行标注逻辑（不要return，让代码继续往下执行）
+      }
+      
+      // 标注处理逻辑（包括普通标注和无序号标注）
+      if (!this.state.isPanning) {
         // 检查是否点击了自定义标注
         const clickedCustomAnnotation = this.getCustomAnnotationAt(mousePos);
         
         if (clickedCustomAnnotation) {
-          // 处理自定义标注点击
+          // 自定义标注：区分点与区域
+          const isRegion = !!(clickedCustomAnnotation.width && clickedCustomAnnotation.height);
           this.handleCustomAnnotationClick(clickedCustomAnnotation, mousePos);
-          
-          // 开始拖拽自定义标注
-          this.startCustomAnnotationDrag(clickedCustomAnnotation, mousePos);
-          return;
+          if (isRegion) {
+            // 判断是否点在 resize 手柄上
+            let handle = this.customAnnotationRenderer?.getRegionHandleAt(mousePos, clickedCustomAnnotation);
+            // 如果CustomAnnotationRenderer没有检测到handle，用本地方法再次检测
+            if (!handle) {
+              handle = this.getRegionHandleAt(mousePos, clickedCustomAnnotation);
+            }
+            
+            if (handle) {
+              this.startCustomAnnotationDrag(clickedCustomAnnotation, mousePos, handle);
+            } else {
+              // 没有命中handle，启动移动拖拽：切换类型并设置为选中
+              if (clickedCustomAnnotation.annotationType === 'custom' && clickedCustomAnnotation.customTypeId && this.customAnnotationManager) {
+                try { this.customAnnotationManager.setCustomAnnotationMode(clickedCustomAnnotation.customTypeId); } catch (e) {}
+              }
+              // 同步两个选中状态：主工具类和渲染器
+              this.state.selectedKeypoint = clickedCustomAnnotation;
+              this.state.isDirectionSelectionMode = false;
+              this.customAnnotationRenderer?.setSelectedAnnotation(clickedCustomAnnotation);
+              console.log('[调试] Region已设为选中:', clickedCustomAnnotation.id, 'order:', clickedCustomAnnotation.order);
+              
+              // 启动拖拽（移动模式，handle = null）
+              this.startCustomAnnotationDrag(clickedCustomAnnotation, mousePos, null);
+              this.render();
+            }
+            return;
+          }
+          // 点类型：不在这里启动拖拽，交由下方 keypoint 逻辑处理（支持点击进入方向选择/或拖拽）
         }
         
         // 检查是否点击了标注点
         const clickedKeypoint = this.getKeypointAt(mousePos);
         
         if (clickedKeypoint) {
+          // 若点击的是自定义点类型，自动切换到对应类型
+          if (clickedKeypoint.annotationType === 'custom' && clickedKeypoint.customTypeId && this.customAnnotationManager && !this.state.isSelectingParent && !this.state.isCustomRegionDragging && !this.state.isDirectionSelectionMode) {
+            try { this.customAnnotationManager.setCustomAnnotationMode(clickedKeypoint.customTypeId); } catch (e) { /* noop */ }
+          }
+          // 若处于父节点选择模式并点击了父类型标注，则绑定并跨时序同步
+          if (this.state.isSelectingParent && this.state.parentSelectionForType) {
+            try {
+              const childTypeId = this.state.parentSelectionForType;
+              const parentTypeId = clickedKeypoint.customTypeId;
+              const childType = this.getCustomType(childTypeId);
+              
+              console.log('[调试] 父节点选择 - 子类型ID:', childTypeId, '父类型ID:', parentTypeId);
+              console.log('[调试] 子类型配置:', childType?.metadata);
+              
+              // 校验：仅允许选择配置了 associateTypeId 的子类型，且父类型匹配
+              if (!childType || childType.metadata?.associateTypeId !== parentTypeId) {
+                const expectedParentType = childType?.metadata?.associateTypeId;
+                const message = `选择的父类型不匹配。期望: ${this.getCustomType(expectedParentType)?.name || expectedParentType}，实际: ${this.getCustomType(parentTypeId)?.name || parentTypeId}`;
+                
+                if (window.PlantAnnotationTool?.showError) {
+                  window.PlantAnnotationTool.showError('父类型不匹配', message);
+                } else {
+                  console.log('[调试]', message);
+                }
+              } else {
+                // 绑定：子标注order → 父标注order
+                const selectedChild = this.state.selectedKeypoint;
+                if (selectedChild) {
+                  // 先立即更新当前图片的keypoints数组，确保即时显示
+                  selectedChild.parentAnnotationType = parentTypeId;
+                  selectedChild.parentAnnotationId = clickedKeypoint.order;
+                  console.log('[调试] 立即更新当前图片的父子关联:', selectedChild.id, '→', clickedKeypoint.id);
+                  
+                  // 然后跨图片同步
+                  await this.bindParentForOrderAcrossImages(childTypeId, selectedChild.order, parentTypeId, clickedKeypoint.order);
+                  const message = `已将 ${childType.name} #${selectedChild.order} 关联到 ${this.getCustomType(parentTypeId)?.name} #${clickedKeypoint.order}，并同步到所有图片`;
+                  
+                  if (window.PlantAnnotationTool?.showSuccess) {
+                    window.PlantAnnotationTool.showSuccess('关联成功', message);
+                  } else {
+                    console.log('[调试] 关联成功:', message);
+                  }
+                  
+                  // 立即重新渲染以显示虚线连接
+                  this.render();
+                  
+                  // 关联成功后清空选中状态
+                  this.clearAllSelections();
+                }
+              }
+            } catch (e) {
+              console.error('绑定父节点失败:', e);
+              if (window.PlantAnnotationTool?.showError) {
+                window.PlantAnnotationTool.showError('绑定失败', e.message || '未知错误');
+              } else {
+                console.log('[调试] 绑定失败:', e.message || '未知错误');
+              }
+            } finally {
+              this.disableParentSelectionMode();
+            }
+            return;
+          }
           console.log('[调试] 点击了标注点', {
             clickedKeypoint: clickedKeypoint.order,
             isDirectionSelectionMode: this.state.isDirectionSelectionMode,
@@ -1199,27 +1470,19 @@ export class AnnotationTool {
             isSameKeypoint: this.state.selectedKeypoint === clickedKeypoint
           });
 
-          // 如果处于方向选择模式且点击的是已选中的标注点，处理方向选择
+          // 点击已选中的点不再立即设置方向；只保持选中，等待下一次点击空白区域再设置方向
           if (this.state.isDirectionSelectionMode && this.state.selectedKeypoint === clickedKeypoint) {
-            console.log('[调试] 处理方向选择');
-            try {
-              await this.handleDirectionSelection(mousePos);
-            } catch (error) {
-              console.error('[方向选择] 处理方向选择失败:', error);
-            }
-            return;
+            // 不做方向设置，继续后续点击/拖拽判定
           }
 
-          // 如果不是在处理方向选择，则开始拖拽标注点
-          // 但是首先检查这是否是一个点击（而不是拖拽）
+          // 如果不是在处理方向选择：区分点击与拖拽
           this.draggedKeypoint = clickedKeypoint;
           this.state.dragStartPoint = mousePos;
-          this.state.mouseDownTime = Date.now(); // 记录按下时间
-          this.state.wasDraggedDuringSession = false; // 重置拖拽标记
+          this.state.mouseDownTime = Date.now();
+          this.state.wasDraggedDuringSession = false;
           this.canvas.style.cursor = 'grabbing';
 
-          // 重要：点击了标注点就直接返回，不要继续执行后面的逻辑
-          return;
+          // 不立即进入方向设置；由 mouseup 判断是点击（只选中）还是拖拽（移动）
         } else {
           // 如果处于方向选择模式，处理方向选择
           if (this.state.isDirectionSelectionMode) {
@@ -1477,8 +1740,8 @@ export class AnnotationTool {
 
       // 更严格的点击判断：距离小且时间短且没有拖拽过
       if (distance < 8 && timeSinceMouseDown < 200 && !wasDragged) {
-        // 这是一个快速点击，不是拖拽
-        this.handleKeypointClick(this.draggedKeypoint);
+        // 这是一个快速点击，不是拖拽：仅选中keypoint但进入方向选择模式
+        this.selectKeypointForDirection(this.draggedKeypoint);
       } else {
         // 这是拖拽，保存状态
         this.saveState();
@@ -1549,6 +1812,12 @@ export class AnnotationTool {
     if (this.state.isCustomRegionDragging) {
       // 完成自定义区域拖拽
       this.finishCustomRegionDrag();
+    }
+    
+    // 🔧 NEW: 清除无序号模式（标注完成后自动关闭）
+    if (this.state.isUnorderedMode) {
+      this.state.isUnorderedMode = false;
+      console.log('[调试] 退出无序号标注模式');
     }
   }
 
@@ -1627,6 +1896,66 @@ export class AnnotationTool {
 
     this.render();
     console.log(`Selected keypoint #${keypoint.order} for direction selection`);
+  }
+  
+  /**
+   * 🔧 NEW: 选中keypoint并进入方向选择模式（仅在点击时调用，拖拽时不调用）
+   */
+  selectKeypointForDirection(keypoint) {
+    console.log('[调试] selectKeypointForDirection 被调用 - 点击而非拖拽', {
+      keypoint: keypoint.order,
+      currentDirection: keypoint.direction,
+      isDirectional: this.getIsDirectionalForKeypoint(keypoint)
+    });
+
+    // 🔧 BUG FIX: 确保标注点具有多方向支持
+    this.ensureMultiDirectionSupport(keypoint);
+
+    this.state.selectedKeypoint = keypoint;
+    
+    // 🔧 FIX: 只有当前标注类型支持方向时才进入方向选择模式
+    const isDirectional = this.getIsDirectionalForKeypoint(keypoint);
+    this.state.isDirectionSelectionMode = isDirectional;
+    this.state.directionSelectionPoint = null;
+
+    console.log('[调试] selectKeypointForDirection 状态设置', {
+      isDirectionSelectionMode: this.state.isDirectionSelectionMode,
+      selectedKeypoint: this.state.selectedKeypoint?.order,
+      isDirectional: isDirectional
+    });
+
+    // 🔧 FIX: Set appropriate cursor
+    this.canvas.style.cursor = isDirectional ? 'crosshair' : 'default';
+
+    // 通知预览管理器显示这个点的预览
+    this.notifySelectedKeypointPreview(keypoint);
+
+    this.render();
+    console.log(`Selected keypoint #${keypoint.order}`, isDirectional ? 'for direction selection' : 'without direction selection');
+  }
+
+  /**
+   * 🔧 NEW: 获取keypoint是否支持方向标注
+   */
+  getIsDirectionalForKeypoint(keypoint) {
+    if (!keypoint) return false;
+    
+    // 如果是自定义标注类型
+    if (keypoint.annotationType === 'custom' && keypoint.customTypeId) {
+      const customType = this.customAnnotationManager?.getCustomType(keypoint.customTypeId);
+      if (customType && customType.metadata) {
+        // 优先使用明确设置的isDirectional值，默认为true（向后兼容）
+        return customType.metadata.isDirectional !== false;
+      }
+    }
+    
+    // 如果是传统的regular类型，默认支持方向
+    if (keypoint.annotationType === 'regular') {
+      return true;
+    }
+    
+    // 默认不支持方向
+    return false;
   }
 
   /**
@@ -2867,6 +3196,133 @@ export class AnnotationTool {
   }
 
   /**
+   * 🔧 NEW: 开始自动排序模式
+   */
+  startAutoOrderMode(typeId) {
+    console.log('[Auto Order] 开始自动排序模式，类型:', typeId);
+    
+    if (this.state.isAutoOrderMode) {
+      console.log('[Auto Order] 已在自动排序模式中');
+      return;
+    }
+    
+    // 获取所有该类型的无序号标注
+    console.log('[Auto Order] 正在查找无序号标注...');
+    const unorderedAnnotations = this.getAllUnorderedAnnotationsOfType(typeId);
+    console.log('[Auto Order] 找到无序号标注:', unorderedAnnotations.length, '个');
+    
+    if (unorderedAnnotations.length === 0) {
+      console.log('[Auto Order] 没有找到无序号标注，尝试跳转到有当前类型的第一张图');
+      // 尝试跳转到有当前类型标注的第一张图
+      this.navigateToFirstImageWithType(typeId);
+      return;
+    }
+    
+    // 按图片分组
+    console.log('[Auto Order] 按图片分组...');
+    const imageGroups = this.groupAnnotationsByImage(unorderedAnnotations);
+    const imageIds = Object.keys(imageGroups).sort();
+    console.log('[Auto Order] 找到图片:', imageIds.length, '个', imageIds);
+    
+    if (imageIds.length === 0) {
+      console.log('[Auto Order] 没有找到需要排序的图片，退出');
+      if (window.showError) {
+        window.showError('自动排序不可用', '没有找到需要排序的图片');
+      }
+      return;
+    }
+    
+    // 初始化自动排序状态
+    this.state.isAutoOrderMode = true;
+    this.state.autoOrderTypeId = typeId;
+    this.state.autoOrderCurrentOrder = 1;
+    this.state.autoOrderImages = imageIds;
+    this.state.autoOrderCurrentImageIndex = 0;
+    
+    // 更新UI
+    this.updateAutoOrderButton(true);
+    this.updateAutoOrderStatus(`Ordering type "${this.getTypeName(typeId)}" #${this.state.autoOrderCurrentOrder}`);
+    
+    // 🔧 FIX: 开始时导航到regular(builtin)标号为1的第一个图
+    this.navigateToImageWithBuiltinOrder(1); // 不需要await，让它异步运行
+    
+    console.log('[Auto Order] 自动排序模式已启动，共', imageIds.length, '个图片需要处理');
+  }
+  
+  /**
+   * 🔧 NEW: 停止自动排序模式
+   */
+  stopAutoOrderMode() {
+    console.log('[Auto Order] 停止自动排序模式');
+    
+    this.state.isAutoOrderMode = false;
+    this.state.autoOrderTypeId = null;
+    this.state.autoOrderCurrentOrder = 1;
+    this.state.autoOrderImages = [];
+    this.state.autoOrderCurrentImageIndex = 0;
+    
+    this.updateAutoOrderButton(false);
+    this.updateAutoOrderStatus('');
+    
+    console.log('[Auto Order] 自动排序模式已停止');
+  }
+  
+  /**
+   * 🔧 NEW: 处理Auto Order中的标注点击
+   */
+  handleAutoOrderAnnotationClick(annotation) {
+    if (!this.state.isAutoOrderMode || !annotation) return false;
+    
+    // 检查是否是当前类型的标注
+    if (annotation.annotationType !== 'custom' || annotation.customTypeId !== this.state.autoOrderTypeId) {
+      return false;
+    }
+    
+    // 如果标注已有序号，更新为当前序号
+    const currentOrder = this.state.autoOrderCurrentOrder;
+    
+    if (annotation.order !== undefined) {
+      console.log('[Auto Order] 更新已有序号标注从', annotation.order, '到', currentOrder);
+    } else {
+      console.log('[Auto Order] 为无序号标注分配序号', currentOrder);
+    }
+    
+    // 更新标注的序号
+    annotation.order = currentOrder;
+    
+    // 保存当前图片的标注
+    this.saveCurrentImageAnnotations();
+    
+    // 同步到其他相同植株和视角的图片
+    this.syncOrderAcrossImages(annotation, currentOrder);
+    
+    // 进入下一个序号
+    this.proceedToNextOrder();
+    
+    return true;
+  }
+  
+  /**
+   * 🔧 NEW: 进入下一个序号
+   */
+  proceedToNextOrder() {
+    // 🔧 FIX: 用户希望的流程是：标注一个后立即切换到下一个图片
+    // 先切换图片，继续当前序号
+    console.log('[Auto Order] 完成当前序号标注，切换到下一个图片');
+    this.navigateToNextImageInAutoOrder();
+  }
+  
+  /**
+   * 🔧 NEW: 跳过当前图片
+   */
+  skipCurrentImageInAutoOrder() {
+    if (!this.state.isAutoOrderMode) return;
+    
+    console.log('[Auto Order] 跳过当前图片');
+    this.navigateToNextUnorderedImage();
+  }
+
+  /**
    * 通知预览管理器显示选中关键点的预览
    */
   notifySelectedKeypointPreview(keypoint) {
@@ -2909,7 +3365,44 @@ export class AnnotationTool {
     const clickedKeypoint = this.getKeypointAt(mousePos);
     if (clickedKeypoint) {
       this.removeKeypoint(clickedKeypoint);
+      return;
     }
+    
+    // 右键点击空白区域
+    console.log('[调试] 右键点击空白区域');
+    
+    // 🔧 NEW: Auto Order模式下右键跳过当前图片
+    if (this.state.isAutoOrderMode) {
+      console.log('[Auto Order] 右键跳过当前图片');
+      this.skipCurrentImageInAutoOrder();
+    } else {
+      // 常规模式：清空所有选中状态
+      this.clearAllSelections();
+    }
+  }
+  
+  /**
+   * 清空所有选中状态
+   */
+  clearAllSelections() {
+    // 清空主工具类的选中状态
+    this.state.selectedKeypoint = null;
+    this.state.isDirectionSelectionMode = false;
+    this.state.directionSelectionPoint = null;
+    
+    // 清空渲染器的选中状态
+    if (this.customAnnotationRenderer) {
+      this.customAnnotationRenderer.clearSelection();
+    }
+    
+    // 如果正在父节点选择模式，也取消
+    if (this.state.isSelectingParent) {
+      this.disableParentSelectionMode();
+    }
+    
+    // 重新渲染
+    this.render();
+    console.log('[调试] 已清空所有选中状态');
   }
 
   /**
@@ -2955,7 +3448,9 @@ export class AnnotationTool {
    * 处理键盘按下
    */
   handleKeyDown(event) {
+    console.log('[调试] 键盘事件:', event.key, 'target:', event.target.tagName, 'focused element:', document.activeElement?.tagName);
     if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+      console.log('[调试] 在输入框中，忽略键盘事件');
       return; // 在输入框中时不处理
     }
     
@@ -2991,6 +3486,60 @@ export class AnnotationTool {
         if (event.ctrlKey || event.metaKey) {
           event.preventDefault();
           this.redo();
+        }
+        break;
+        
+      case 'e':
+      case 'E':
+        event.preventDefault();
+        console.log('[调试] E键被按下 - 父节点选择模式切换');
+        
+        // 切换父节点选择模式（需要已有选中点，且该类型配置了关联父类型）
+        if (this.state.isSelectingParent) {
+          console.log('[调试] 取消父节点选择模式');
+          this.disableParentSelectionMode();
+          if (window.PlantAnnotationTool?.showInfo) {
+            window.PlantAnnotationTool.showInfo('Parent Link', '已取消父节点选择');
+          }
+          break;
+        }
+        
+        // 需要当前选中关键点
+        const selected = this.state.selectedKeypoint;
+        console.log('[调试] 当前选中标注:', selected?.id, 'type:', selected?.annotationType, 'customTypeId:', selected?.customTypeId);
+        
+        if (!selected || selected.annotationType !== 'custom' || !selected.customTypeId) {
+          console.log('[调试] 无有效选中标注，显示错误提示');
+          if (window.PlantAnnotationTool?.showError) {
+            window.PlantAnnotationTool.showError('无法进入父节点选择', '请先选中一个可关联父节点的自定义标注');
+          } else {
+            console.log('[调试] 无法进入父节点选择 - 请先选中一个可关联父节点的自定义标注');
+          }
+          break;
+        }
+        
+        const childType = this.getCustomType(selected.customTypeId);
+        const associateId = childType?.metadata?.associateTypeId;
+        console.log('[调试] 子类型:', childType?.name, '关联父类型ID:', associateId);
+        
+        if (!associateId) {
+          console.log('[调试] 未配置父类型，显示错误提示');
+          if (window.PlantAnnotationTool?.showError) {
+            window.PlantAnnotationTool.showError('未配置父类型', '该标注类型未在 Annotation Type Setting 中设置父类型');
+          } else {
+            console.log('[调试] 未配置父类型 - 该标注类型未在 Annotation Type Setting 中设置父类型');
+          }
+          break;
+        }
+        
+        console.log('[调试] 启动父节点选择模式');
+        this.enableParentSelectionMode(selected.customTypeId);
+        if (window.PlantAnnotationTool?.showInfo) {
+          const parentTypeName = this.getCustomType(associateId)?.name || '父类型';
+          window.PlantAnnotationTool.showInfo('Parent Link', `已进入父节点选择模式：点击一个"${parentTypeName}"标注以建立关联`);
+        } else {
+          const parentTypeName = this.getCustomType(associateId)?.name || '父类型';
+          console.log(`[调试] 已进入父节点选择模式：点击一个"${parentTypeName}"标注以建立关联`);
         }
         break;
     }
@@ -3077,8 +3626,13 @@ export class AnnotationTool {
       }
     }
 
-    // 🔧 FIX: 使用类型特定的序号分配
-    const order = customTypeId ? this.findNextAvailableOrderForType(customTypeId) : this.findNextAvailableOrder();
+    // 🔧 FIX: 使用类型特定的序号分配，支持无序号模式
+    let order;
+    if (this.state.isUnorderedMode) {
+      order = null; // 无序号标注
+    } else {
+      order = customTypeId ? this.findNextAvailableOrderForType(customTypeId) : this.findNextAvailableOrder();
+    }
 
     // 统一方向格式：将传统的left/right转换为角度
     let normalizedDirection = direction;
@@ -3102,7 +3656,7 @@ export class AnnotationTool {
       timestamp: new Date().toISOString(),
       ...(normalizedDirection !== undefined && { direction: normalizedDirection }),
       ...(normalizedDirection !== undefined && { directionType: 'angle' }),
-      order: order,  // 添加序号字段
+      ...(order !== null && { order }),  // 只有非null时才添加序号字段
       
       // 🔄 NEW: 统一标注系统 - 支持自定义类型
       annotationType: customTypeId ? 'custom' : 'regular',
@@ -3245,20 +3799,24 @@ export class AnnotationTool {
     const startPos = this.screenToImage(this.state.customRegionStartPoint.x, this.state.customRegionStartPoint.y);
     const endPos = this.screenToImage(this.state.customRegionCurrentPoint.x, this.state.customRegionCurrentPoint.y);
 
-    // 检查拖拽距离是否足够
-    const width = Math.abs(endPos.x - startPos.x);
-    const height = Math.abs(endPos.y - startPos.y);
-    const minSize = 10; // 最小区域尺寸
+    // 检查拖拽距离是否足够（以屏幕像素为准，避免高倍缩放下误判）
+    const startScreen = this.state.customRegionStartPoint;
+    const currentScreen = this.state.customRegionCurrentPoint;
+    const screenWidth = Math.abs(currentScreen.x - startScreen.x);
+    const screenHeight = Math.abs(currentScreen.y - startScreen.y);
+    const minScreenSize = 8; // 屏幕像素阈值
 
-    if (width < minSize || height < minSize) {
+    if (screenWidth < minScreenSize || screenHeight < minScreenSize) {
       console.log('Region too small, ignoring');
       this.resetCustomRegionDrag();
       return;
     }
 
-    // 计算区域位置
+    // 计算区域位置与尺寸（图像坐标）
     const x = Math.min(startPos.x, endPos.x);
     const y = Math.min(startPos.y, endPos.y);
+    const width = Math.abs(endPos.x - startPos.x);
+    const height = Math.abs(endPos.y - startPos.y);
     
     // 创建自定义区域标注
     const keypoint = this.addCustomRegionAnnotation(x, y, width, height, this.state.customRegionTypeId);
@@ -4795,7 +5353,7 @@ export class AnnotationTool {
   /**
    * 开始自定义标注拖拽
    */
-  startCustomAnnotationDrag(annotation, mousePos) {
+  startCustomAnnotationDrag(annotation, mousePos, handle = null) {
     if (!this.customAnnotationRenderer) return;
     
     this.customAnnotationDragState.isDragging = true;
@@ -4803,7 +5361,7 @@ export class AnnotationTool {
     this.customAnnotationDragState.startPosition = mousePos;
     
     // 通知渲染器开始拖拽
-    this.customAnnotationRenderer.startDrag(annotation, mousePos);
+    this.customAnnotationRenderer.startDrag(annotation, mousePos, handle);
     
     this.canvas.style.cursor = 'grabbing';
     console.log('Started custom annotation drag:', annotation.id);
@@ -4893,6 +5451,66 @@ export class AnnotationTool {
   getAppState() {
     return window.PlantAnnotationTool?.appState;
   }
+
+  /**
+   * 绑定父节点到指定类型与序号并跨时序同步
+   */
+  async bindParentForOrderAcrossImages(childTypeId, childOrder, parentTypeId, parentOrder) {
+    const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+    const appState = window.PlantAnnotationTool?.appState;
+    if (!plantDataManager || !appState?.currentPlant) throw new Error('Missing plant context');
+    
+    console.log('[调试] 开始跨图片同步关联:', {
+      childTypeId, childOrder, parentTypeId, parentOrder,
+      plant: appState.currentPlant.id,
+      viewAngle: appState.currentPlant.selectedViewAngle
+    });
+    
+    const images = await plantDataManager.getPlantImages(appState.currentPlant.id, appState.currentPlant.selectedViewAngle);
+    let syncCount = 0;
+    let skipCount = 0;
+    
+    for (const image of images) {
+      try {
+        const annotations = await plantDataManager.getImageAnnotations(image.id);
+        
+        // 必须同时找到对应order的子节点和父节点才能同步
+        const child = annotations.find(a => a.annotationType === 'custom' && a.customTypeId === childTypeId && a.order === childOrder);
+        const parent = annotations.find(a => a.annotationType === 'custom' && a.customTypeId === parentTypeId && a.order === parentOrder);
+        
+        if (child && parent) {
+          // 更新子节点的父绑定信息
+          child.parentAnnotationType = parentTypeId;
+          child.parentAnnotationId = parentOrder;
+          await plantDataManager.saveImageAnnotations(image.id, annotations);
+          syncCount++;
+          console.log(`[调试] 图片 ${image.id} 同步成功: ${childTypeId}#${childOrder} → ${parentTypeId}#${parentOrder}`);
+        } else {
+          skipCount++;
+          const reason = !child ? `缺少子节点 ${childTypeId}#${childOrder}` : 
+                       !parent ? `缺少父节点 ${parentTypeId}#${parentOrder}` : '未知原因';
+          console.log(`[调试] 图片 ${image.id} 跳过同步: ${reason}`);
+        }
+      } catch (e) {
+        skipCount++;
+        console.warn(`[调试] 图片 ${image.id} 同步失败:`, e.message);
+      }
+    }
+    
+    // 保存当前图片的更改
+    try {
+      const currentImageId = window.PlantAnnotationTool?.appState?.currentImage?.id;
+      if (currentImageId) {
+        await plantDataManager.saveImageAnnotations(currentImageId, this.keypoints);
+        console.log(`[调试] 当前图片 ${currentImageId} 的父子关联已保存`);
+      }
+    } catch (e) {
+      console.warn('[调试] 保存当前图片失败:', e.message);
+    }
+    
+    console.log(`[调试] 跨图片同步完成: 成功 ${syncCount} 张，跳过 ${skipCount} 张`);
+    this.render();
+  }
   
   /**
    * 初始化自定义标注系统
@@ -4916,6 +5534,11 @@ export class AnnotationTool {
       this.customAnnotationManager.addEventListener('onModeChange', (data) => {
         console.log('Mode changed:', data.mode, 'Type:', data.typeId);
         this.syncBranchPointPreview();
+        
+        // 更新SIFT按钮状态
+        if (window.updateSiftButtonState && typeof window.updateSiftButtonState === 'function') {
+          window.updateSiftButtonState();
+        }
       });
       
       console.log('CustomAnnotationManager initialized');
@@ -4987,11 +5610,39 @@ export class AnnotationTool {
     // 在统一系统中，自定义标注点击处理与常规标注相同
     console.log('Custom annotation clicked:', customAnnotation.id, 'type:', customAnnotation.annotationType);
     
+    // 🔧 NEW: 处理Auto Order模式下的点击
+    if (this.state.isAutoOrderMode) {
+      const handled = this.handleAutoOrderAnnotationClick(customAnnotation);
+      if (handled) {
+        return; // Auto Order处理了点击，直接返回
+      }
+    }
+    
     // 可以在这里添加自定义标注特有的点击逻辑
     // 例如显示自定义标注的详细信息
     const customType = this.getCustomType(customAnnotation.customTypeId);
     if (customType) {
       console.log('Custom type:', customType.name, 'color:', customType.color);
+    }
+
+    // 若未处于父节点选择/方向选择/区域拖拽，点击任何自定义标注即切换 Annotation Type
+    if (!this.state.isSelectingParent && !this.state.isDirectionSelectionMode && !this.customAnnotationDragState.isDragging) {
+      if (customAnnotation.annotationType === 'custom' && customAnnotation.customTypeId && this.customAnnotationManager) {
+        try { this.customAnnotationManager.setCustomAnnotationMode(customAnnotation.customTypeId); } catch (e) {}
+      }
+      
+      // 🔧 FIX: 不在mouseDown阶段立即选中，延迟到mouseUp阶段判断是点击还是拖拽
+      // 区域类型：立即选中（因为区域需要处理resize handles）
+      if (customAnnotation.width && customAnnotation.height) {
+        this.state.selectedKeypoint = customAnnotation;
+        this.state.isDirectionSelectionMode = false;
+        this.customAnnotationRenderer?.setSelectedAnnotation(customAnnotation);
+        console.log('[调试] Region已在handleCustomAnnotationClick中设为选中:', customAnnotation.id);
+        this.render();
+      } else {
+        // 点类型：不在这里立即选中，等待mouseUp判断是点击还是拖拽
+        console.log('[调试] 点类型标注被点击，等待mouseUp判断是点击还是拖拽');
+      }
     }
   }
 
@@ -5083,12 +5734,14 @@ export class AnnotationTool {
     const startPos = this.screenToImage(this.state.customRegionStartPoint.x, this.state.customRegionStartPoint.y);
     const endPos = this.screenToImage(this.state.customRegionCurrentPoint.x, this.state.customRegionCurrentPoint.y);
 
-    // 检查拖拽距离是否足够
-    const width = Math.abs(endPos.x - startPos.x);
-    const height = Math.abs(endPos.y - startPos.y);
-    const minSize = 10; // 最小区域尺寸
+    // 检查拖拽距离是否足够（以屏幕像素为准，避免高倍缩放下误判）
+    const startScreen = this.state.customRegionStartPoint;
+    const currentScreen = this.state.customRegionCurrentPoint;
+    const screenWidth = Math.abs(currentScreen.x - startScreen.x);
+    const screenHeight = Math.abs(currentScreen.y - startScreen.y);
+    const minScreenSize = 8; // 屏幕像素阈值
 
-    if (width < minSize || height < minSize) {
+    if (screenWidth < minScreenSize || screenHeight < minScreenSize) {
       console.log('Region too small, ignoring');
       this.resetCustomRegionDrag();
       return;
@@ -5113,9 +5766,11 @@ export class AnnotationTool {
         return;
       }
       
-      // 计算区域位置
+      // 计算区域位置与尺寸（图像坐标）
       const x = Math.min(startPos.x, endPos.x);
       const y = Math.min(startPos.y, endPos.y);
+      const width = Math.abs(endPos.x - startPos.x);
+      const height = Math.abs(endPos.y - startPos.y);
       
       // 🔧 FIX: 使用统一系统方法创建自定义区域标注
       const keypoint = this.addCustomRegionAnnotation(x, y, width, height, currentCustomType.id);
@@ -5153,6 +5808,18 @@ export class AnnotationTool {
     this.removeKeypoint(customAnnotation);
   }
 
+  // 选择父节点模式（简版）
+  enableParentSelectionMode(childTypeId) {
+    this.state.isSelectingParent = true;
+    this.state.parentSelectionForType = childTypeId;
+    this.canvas.style.cursor = 'cell';
+  }
+  disableParentSelectionMode() {
+    this.state.isSelectingParent = false;
+    this.state.parentSelectionForType = null;
+    this.canvas.style.cursor = 'crosshair';
+  }
+
   /**
    * 获取自定义标注管理器
    */
@@ -5175,8 +5842,18 @@ export class AnnotationTool {
   handleMiddleMouseButton(mousePos) {
     // 只有在选中了标注点时才允许进入方向数量模式
     if (!this.state.selectedKeypoint) {
-      console.log('[多方向] 未选中标注点，忽略中键点击');
-      return;
+      // 若未选中，尝试优先选择悬停点；否则命中最近点
+      let candidate = this.hoveredKeypoint;
+      if (!candidate) {
+        const kp = this.getKeypointAt(mousePos);
+        if (kp) candidate = kp;
+      }
+      if (candidate) {
+        this.selectKeypoint(candidate);
+      } else {
+        console.log('[多方向] 未选中标注点，忽略中键点击');
+        return;
+      }
     }
 
     if (this.state.isDirectionCountMode) {
@@ -5914,12 +6591,23 @@ export class AnnotationTool {
         return;
       }
 
-      // 获取当前和上一帧的标注数据
-      const currentAnnotations = [...this.keypoints];
-      const previousAnnotations = await this.getPreviousFrameAnnotations();
+      // 获取当前和上一帧的标注数据（只支持builtin keypoints）
+      const currentAnnotations = this.keypoints.filter(kp => 
+        kp.annotationType === 'custom' && kp.customTypeId === 'builtin-regular-keypoint'
+      );
+      const allPreviousAnnotations = await this.getPreviousFrameAnnotations();
+      const previousAnnotations = allPreviousAnnotations ? 
+        allPreviousAnnotations.filter(kp => 
+          kp.annotationType === 'custom' && kp.customTypeId === 'builtin-regular-keypoint'
+        ) : null;
       
       if (!previousAnnotations || previousAnnotations.length === 0) {
-        this.showSiftError('无法获取上一帧标注数据', '请确保上一帧存在标注点');
+        this.showSiftError('无法获取上一帧builtin标注数据', '请确保上一帧存在Regular (Builtin)标注点');
+        return;
+      }
+      
+      if (currentAnnotations.length === 0) {
+        this.showSiftError('当前帧无builtin标注', '请先添加Regular (Builtin)标注点');
         return;
       }
 
@@ -6664,5 +7352,617 @@ export class AnnotationTool {
     this.ctx.textAlign = 'center';
     this.ctx.textBaseline = 'middle';
     this.ctx.fillText(`${offset.toFixed(1)}px`, midX, midY - 8);
+  }
+
+  /**
+   * 🔧 NEW: 获取指定类型的所有无序号标注
+   */
+  getAllUnorderedAnnotationsOfType(typeId) {
+    console.log('[Auto Order] getAllUnorderedAnnotationsOfType called with typeId:', typeId);
+    console.log('[Auto Order] 当前图片标注数量:', this.keypoints.length);
+    
+    const unorderedAnnotations = [];
+    
+    // 检查当前图片的标注
+    this.keypoints.forEach(annotation => {
+      console.log(`[Auto Order] 检查标注:`, {
+        id: annotation.id,
+        annotationType: annotation.annotationType,
+        customTypeId: annotation.customTypeId,
+        order: annotation.order,
+        hasOrder: annotation.hasOwnProperty('order'),
+        isTargetType: annotation.customTypeId === typeId
+      });
+      
+      if (annotation.annotationType === 'custom' && 
+          annotation.customTypeId === typeId && 
+          (annotation.order === undefined || annotation.order === null)) {
+        console.log('[Auto Order] 找到无序号标注:', annotation.id);
+        unorderedAnnotations.push({
+          ...annotation,
+          imageId: this.currentImage || 'current'
+        });
+      }
+    });
+    
+    console.log('[Auto Order] 总共找到无序号标注:', unorderedAnnotations.length, '个');
+    return unorderedAnnotations;
+  }
+  
+  /**
+   * 🔧 NEW: 按图片分组标注
+   */
+  groupAnnotationsByImage(annotations) {
+    const groups = {};
+    annotations.forEach(annotation => {
+      const imageId = annotation.imageId;
+      if (!groups[imageId]) {
+        groups[imageId] = [];
+      }
+      groups[imageId].push(annotation);
+    });
+    return groups;
+  }
+  
+  /**
+   * 🔧 NEW: 获取类型名称
+   */
+  getTypeName(typeId) {
+    if (!this.customAnnotationManager) return typeId;
+    const type = this.customAnnotationManager.getCustomType(typeId);
+    return type ? type.name : typeId;
+  }
+  
+  /**
+   * 🔧 NEW: 更新Auto Order按钮状态
+   */
+  updateAutoOrderButton(isActive) {
+    const btn = document.getElementById('auto-order-btn');
+    console.log('[Auto Order] updateAutoOrderButton called:', { isActive, btnFound: !!btn });
+    
+    if (btn) {
+      if (isActive) {
+        btn.classList.add('active');
+        btn.textContent = 'Stop Order';
+        btn.title = 'Stop automated order assignment';
+        console.log('[Auto Order] 按钮已设置为激活状态');
+      } else {
+        btn.classList.remove('active');
+        btn.textContent = 'Auto Order';
+        btn.title = 'Start automated order assignment';
+        console.log('[Auto Order] 按钮已设置为非激活状态');
+      }
+    } else {
+      console.error('[Auto Order] 找不到auto-order-btn按钮元素');
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 更新Auto Order状态显示
+   */
+  updateAutoOrderStatus(message) {
+    const statusElement = document.getElementById('auto-order-status');
+    console.log('[Auto Order] updateAutoOrderStatus called:', { message, statusFound: !!statusElement });
+    if (statusElement) {
+      statusElement.textContent = message;
+      statusElement.style.fontWeight = 'bold';
+      statusElement.style.color = '#2563eb';
+    } else {
+      console.error('[Auto Order] 找不到auto-order-status状态元素');
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 导航到指定图片进行Auto Order
+   */
+  navigateToImageForAutoOrder(imageId) {
+    console.log('[Auto Order] 切换到图片:', imageId);
+    // 暂时使用下一张图片导航
+    if (window.navigateToNextImage) {
+      window.navigateToNextImage(true);
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 导航到下一个有无序号标注的图片
+   */
+  navigateToNextUnorderedImage() {
+    console.log('[Auto Order] 导航到下一个有无序号标注的图片');
+    
+    // 暂时使用简单的下一张图片导航
+    if (window.navigateToNextImage) {
+      const success = window.navigateToNextImage(true);
+      if (!success) {
+        // 没有下一张图片，完成Auto Order
+        this.completeAutoOrder();
+      }
+    } else {
+      console.error('[Auto Order] 找不到图片导航函数');
+      this.completeAutoOrder();
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 完成Auto Order
+   */
+  completeAutoOrder() {
+    const typeId = this.state.autoOrderTypeId;
+    const typeName = this.getTypeName(typeId);
+    const totalOrders = this.state.autoOrderCurrentOrder - 1;
+    
+    this.stopAutoOrderMode();
+    
+    if (window.showSuccess) {
+      window.showSuccess('自动排序完成', `已为类型 "${typeName}" 分配了 ${totalOrders} 个序号`);
+    }
+    
+    console.log('[Auto Order] 自动排序完成，共分配', totalOrders, '个序号');
+  }
+  
+  /**
+   * 🔧 NEW: 同步序号到其他图片
+   */
+  syncOrderAcrossImages(annotation, order) {
+    if (!this.plantDataManager) return;
+    
+    const currentPlant = this.plantDataManager.getCurrentPlant();
+    const currentViewAngle = this.plantDataManager.getCurrentViewAngle();
+    
+    if (!currentPlant || !currentViewAngle) return;
+    
+    // 获取相同植株和视角的所有图片
+    const allImages = this.plantDataManager.getAllImagesForPlantAndView(currentPlant, currentViewAngle);
+    
+    allImages.forEach(imageId => {
+      if (imageId === this.currentImage) return; // 跳过当前图片
+      
+      const annotations = this.plantDataManager.getAnnotationsForImage(imageId) || [];
+      let updated = false;
+      
+      annotations.forEach(ann => {
+        // 查找相同位置和类型的标注（通过坐标相似度判断）
+        if (ann.annotationType === 'custom' && 
+            ann.customTypeId === annotation.customTypeId &&
+            (ann.order === undefined || ann.order === null) &&
+            this.areAnnotationsSimilarPosition(ann, annotation)) {
+          ann.order = order;
+          updated = true;
+          console.log('[Auto Order] 同步序号到图片', imageId, '标注', ann.id);
+        }
+      });
+      
+      if (updated) {
+        this.plantDataManager.saveAnnotationsForImage(imageId, annotations);
+      }
+    });
+  }
+  
+  /**
+   * 🔧 NEW: 判断两个标注是否位置相似
+   */
+  areAnnotationsSimilarPosition(ann1, ann2) {
+    const threshold = 50; // 像素阈值
+    const dx = Math.abs(ann1.x - ann2.x);
+    const dy = Math.abs(ann1.y - ann2.y);
+    return dx < threshold && dy < threshold;
+  }
+  
+  /**
+   * 🔧 NEW: 检查是否应该切换到下一个图片（当前序号）
+   */
+  shouldSwitchToNextImageInAutoOrder() {
+    // 简化版本：先检查当前图片是否还有当前序号的无序号标注
+    const currentTypeId = this.state.autoOrderTypeId;
+    const hasUnorderedInCurrentImage = this.keypoints.some(annotation =>
+      annotation.annotationType === 'custom' &&
+      annotation.customTypeId === currentTypeId &&
+      (annotation.order === undefined || annotation.order === null)
+    );
+    
+    // 如果当前图片没有无序号标注了，但是还需要检查其他图片
+    return !hasUnorderedInCurrentImage;
+  }
+  
+  /**
+   * 🔧 NEW: 导航到下一个图片（继续当前序号）
+   */
+  navigateToNextImageInAutoOrder() {
+    console.log('[Auto Order] 切换到下一个图片继续当前序号');
+    
+    // 先尝试切换到下一张图片
+    if (window.navigateToNextImage) {
+      const success = window.navigateToNextImage(true);
+      
+      if (!success) {
+        // 没有下一张图片了，当前序号完成，进入下一个序号
+        console.log('[Auto Order] 没有更多图片，当前序号完成，进入下一个序号');
+        this.advanceToNextOrderNumber();
+      } else {
+        // 切换成功，等待用户在新图片上标注
+        console.log('[Auto Order] 切换图片成功，等待用户标注');
+      }
+    } else {
+      console.error('[Auto Order] 找不到图片导航函数');
+      this.completeAutoOrder();
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 进入下一个序号编号
+   */
+  async advanceToNextOrderNumber() {
+    console.log('[Auto Order] advanceToNextOrderNumber 被调用');
+    this.state.autoOrderCurrentOrder++;
+    
+    // 更新状态显示
+    this.updateAutoOrderStatus(`Ordering type "${this.getTypeName(this.state.autoOrderTypeId)}" #${this.state.autoOrderCurrentOrder}`);
+    
+    // 🔧 FIX: 移除dependsOnBranchPoint选项，默认总是跳转到builtin对应编号的第一个图
+    console.log('[Auto Order] 跳转到builtin序号', this.state.autoOrderCurrentOrder);
+    await this.navigateToImageWithBuiltinOrder(this.state.autoOrderCurrentOrder);
+  }
+  
+  /**
+   * 🔧 NEW: 导航到当前标注类型的第一张图
+   */
+  navigateToFirstImageOfCurrentType() {
+    console.log('[Auto Order] 跳转到当前标注类型的第一张图');
+    
+    // 简化实现：回到第一张图片，不管是否有当前类型的标注
+    this.navigateToAbsoluteFirst();
+  }
+  
+  /**
+   * 🔧 NEW: 导航到有指定类型标注的第一张图
+   */
+  async navigateToFirstImageWithType(typeId) {
+    console.log('[Auto Order] 查找有指定类型标注的第一张图:', typeId);
+    
+    try {
+      // 获取缩略图容器
+      const thumbnailContainer = document.querySelector('#thumbnail-container');
+      if (!thumbnailContainer) {
+        console.error('[Auto Order] 找不到缩略图容器');
+        return;
+      }
+      
+      // 获取所有缩略图
+      const thumbnails = thumbnailContainer.querySelectorAll('.image-thumbnail');
+      console.log('[Auto Order] 找到缩略图数量:', thumbnails.length);
+      
+      // 遍历所有缩略图，查找有指定类型标注的图片
+      for (const thumbnail of thumbnails) {
+        const imageId = thumbnail.getAttribute('data-image-id');
+        if (!imageId) continue;
+        
+        console.log('[Auto Order] 检查图片:', imageId);
+        const hasType = await this.checkImageHasType(imageId, typeId);
+        if (hasType) {
+          console.log('[Auto Order] 找到有指定类型的图片:', imageId);
+          // 直接点击缩略图跳转
+          thumbnail.click();
+          return;
+        }
+      }
+      
+      console.log('[Auto Order] 没有找到有指定类型标注的图片');
+      // 如果没找到，就回到第一张图片
+      this.navigateToAbsoluteFirst();
+      
+    } catch (error) {
+      console.error('[Auto Order] 查找指定类型图片失败:', error);
+      // 出错时回到第一张图片
+      this.navigateToAbsoluteFirst();
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 导航到绝对第一张图片
+   */
+  navigateToAbsoluteFirst() {
+    console.log('[Auto Order] 导航到绝对第一张图片');
+    
+    let attempts = 0;
+    const maxAttempts = 50;
+    
+    const goToPrevious = () => {
+      if (attempts >= maxAttempts) {
+        console.log('[Auto Order] 已尝试最大次数，停留在当前图片');
+        return;
+      }
+      
+      attempts++;
+      if (window.navigateToPreviousImage) {
+        const success = window.navigateToPreviousImage();
+        if (success) {
+          setTimeout(goToPrevious, 200);
+        } else {
+          console.log('[Auto Order] 已到达第一张图片');
+        }
+      } else {
+        console.error('[Auto Order] 找不到navigateToPreviousImage函数');
+      }
+    };
+    
+    goToPrevious();
+  }
+
+  /**
+   * 🔧 NEW: 导航到第一个有无序号标注的图片
+   */
+  navigateToFirstImageWithUnorderedAnnotations() {
+    console.log('[Auto Order] 跳转到第一个有无序号标注的图片');
+    
+    // 简化实现：连续按上一张图片，直到无法继续，然后开始从头查找
+    this.navigateToBeginningThenFindUnordered();
+  }
+  
+  /**
+   * 🔧 NEW: 导航到开始位置然后查找无序号标注
+   */
+  navigateToBeginningThenFindUnordered() {
+    console.log('[Auto Order] 尝试导航到第一张图片');
+    
+    // 尝试多次按上一张图片来回到开始
+    let attempts = 0;
+    const maxAttempts = 50; // 最多尝试50次
+    
+    const goToPrevious = () => {
+      if (attempts >= maxAttempts) {
+        console.log('[Auto Order] 已尝试最大次数，开始查找');
+        this.findFirstUnorderedFromCurrent();
+        return;
+      }
+      
+      attempts++;
+      if (window.navigateToPreviousImage) {
+        const success = window.navigateToPreviousImage();
+        if (success) {
+          // 延迟一点时间等待图片加载，然后继续
+          setTimeout(goToPrevious, 200);
+        } else {
+          // 无法继续回退，说明已经到第一张图片
+          console.log('[Auto Order] 已到达第一张图片，开始查找');
+          this.findFirstUnorderedFromCurrent();
+        }
+      } else {
+        console.error('[Auto Order] 找不到navigateToPreviousImage函数');
+        this.findFirstUnorderedFromCurrent();
+      }
+    };
+    
+    goToPrevious();
+  }
+  
+  /**
+   * 🔧 NEW: 从当前位置开始查找第一个有无序号标注的图片
+   */
+  findFirstUnorderedFromCurrent() {
+    console.log('[Auto Order] 从当前位置查找第一个有无序号标注的图片');
+    
+    // 检查当前图片
+    const hasUnordered = this.keypoints.some(annotation =>
+      annotation.annotationType === 'custom' &&
+      annotation.customTypeId === this.state.autoOrderTypeId &&
+      (annotation.order === undefined || annotation.order === null)
+    );
+    
+    if (hasUnordered) {
+      console.log('[Auto Order] 当前图片有无序号标注，停留在此');
+      return;
+    }
+    
+    // 当前图片没有，继续下一张
+    this.navigateToNextUnorderedImage();
+  }
+  
+  /**
+   * 🔧 NEW: 导航到有builtin指定编号的图片
+   */
+  async navigateToImageWithBuiltinOrder(order) {
+    console.log('[Auto Order] 跳转到builtin序号', order, '的图片');
+    
+    // 🔧 FIX: 使用简化的搜索模式，模仿Auto Direction
+    await this.searchAndNavigateToBuiltinOrder(order);
+  }
+  
+  /**
+   * 🔧 NEW: 直接搜索并导航到builtin序号的图片
+   */
+  async searchAndNavigateToBuiltinOrder(order) {
+    console.log('[Auto Order] 直接搜索builtin序号', order);
+    
+    // 🔧 FINAL FIX: 完全模仿Auto Direction - 直接在已读取数据中查找并跳转
+    // 1. 从window获取所有图片数据
+    // 2. 直接在数据中查找目标
+    // 3. 直接跳转到目标图片
+    
+    const appState = window.PlantAnnotationTool?.appState;
+    if (!appState?.currentPlant) {
+      console.error('[Auto Order] 无法获取当前植物信息');
+      return;
+    }
+    
+    // 从缩略图获取图片列表（模仿Auto Direction）
+    const thumbnailContainer = document.querySelector('#thumbnail-container');
+    if (!thumbnailContainer) {
+      console.error('[Auto Order] 找不到缩略图容器');
+      return;
+    }
+    
+    const thumbnails = thumbnailContainer.querySelectorAll('.image-thumbnail');
+    console.log('[Auto Order] 从缩略图找到', thumbnails.length, '张图片');
+    
+    // 遍历缩略图，找到第一个有目标builtin序号的图片
+    for (const thumbnail of thumbnails) {
+      const imageId = thumbnail.dataset.imageId;
+      if (!imageId) continue;
+      
+      // 检查这个图片是否有目标builtin序号（从本地数据检查）
+      const hasBuiltin = await this.checkImageHasBuiltinOrder(imageId, order);
+      if (hasBuiltin) {
+        console.log('[Auto Order] 找到目标图片:', imageId);
+        // 直接点击缩略图跳转
+        thumbnail.click();
+        return;
+      }
+    }
+    
+    console.log('[Auto Order] 没有找到builtin序号', order, '的图片');
+  }
+  
+  /**
+   * 🔧 NEW: 检查指定图片是否有指定类型的标注
+   */
+  async checkImageHasType(imageId, typeId) {
+    try {
+      // 从植物数据管理器获取标注数据
+      const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+      if (!plantDataManager) return false;
+      
+      if (imageId === this.currentImage) {
+        // 当前图片，使用已加载的 this.keypoints
+        return this.keypoints.some(annotation =>
+          annotation.annotationType === 'custom' &&
+          annotation.customTypeId === typeId
+        );
+      } else {
+        // 其他图片，需要获取标注数据
+        const annotationData = await plantDataManager.annotationStorage.getImageAnnotation(imageId);
+        if (!annotationData || !annotationData.annotations) {
+          return false;
+        }
+        const annotations = annotationData.annotations;
+        return annotations.some(annotation =>
+          annotation.annotationType === 'custom' &&
+          annotation.customTypeId === typeId
+        );
+      }
+    } catch (error) {
+      console.error(`[Auto Order] 无法获取图片标注: ${imageId}`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 检查指定图片是否有builtin序号（模仿Auto Direction的数据检查）
+   */
+  async checkImageHasBuiltinOrder(imageId, order) {
+    try {
+      // 从植物数据管理器获取标注数据
+      const plantDataManager = window.PlantAnnotationTool?.plantDataManager;
+      if (!plantDataManager) return false;
+      
+      // 如果是当前图片，直接用this.keypoints
+      if (imageId === this.currentImage) {
+        return this.keypoints.some(annotation =>
+          annotation.annotationType === 'custom' &&
+          annotation.customTypeId === 'builtin-regular-keypoint' &&
+          annotation.order === order
+        );
+      }
+      
+      // 🔧 FIX: 对于其他图片，尝试获取标注数据
+      try {
+        const annotationData = await plantDataManager.annotationStorage.getImageAnnotation(imageId);
+        if (!annotationData || !annotationData.annotations) {
+          return false;
+        }
+        const annotations = annotationData.annotations;
+        return annotations.some(annotation =>
+          annotation.annotationType === 'custom' &&
+          annotation.customTypeId === 'builtin-regular-keypoint' &&
+          annotation.order === order
+        );
+      } catch (annotationError) {
+        console.warn('[Auto Order] 无法获取图片标注:', imageId, annotationError);
+        return false;
+      }
+      
+    } catch (error) {
+      console.warn('[Auto Order] 检查图片标注失败:', imageId, error);
+      return false;
+    }
+  }
+
+  /**
+   * 🔧 NEW: 导航到开始位置然后查找builtin序号
+   */
+  navigateToBeginningThenFindBuiltinOrder(order) {
+    console.log('[Auto Order] 查找builtin序号', order, '的图片');
+    
+    // 类似于navigateToBeginningThenFindUnordered，但查找builtin序号
+    let attempts = 0;
+    const maxAttempts = 50;
+    
+    const goToPrevious = () => {
+      if (attempts >= maxAttempts) {
+        console.log('[Auto Order] 已尝试最大次数，开始查找builtin序号');
+        this.findBuiltinOrderFromCurrent(order);
+        return;
+      }
+      
+      attempts++;
+      if (window.navigateToPreviousImage) {
+        const success = window.navigateToPreviousImage();
+        if (success) {
+          setTimeout(goToPrevious, 200);
+        } else {
+          console.log('[Auto Order] 已到达第一张图片，开始查找builtin序号');
+          this.findBuiltinOrderFromCurrent(order);
+        }
+      } else {
+        console.error('[Auto Order] 找不到navigateToPreviousImage函数');
+        this.findBuiltinOrderFromCurrent(order);
+      }
+    };
+    
+    goToPrevious();
+  }
+  
+  /**
+   * 🔧 NEW: 从当前位置查找builtin序号
+   */
+  findBuiltinOrderFromCurrent(order) {
+    console.log('[Auto Order] 从当前位置查找builtin序号', order);
+    
+    // 检查当前图片是否有builtin指定序号的标注
+    const hasBuiltinOrder = this.keypoints.some(annotation =>
+      annotation.annotationType === 'custom' &&
+      annotation.customTypeId === 'builtin-regular-keypoint' &&
+      annotation.order === order
+    );
+    
+    if (hasBuiltinOrder) {
+      console.log('[Auto Order] 找到builtin序号', order, '，停留在此图片');
+      // 找到了，停留在此图片等待用户标注
+      console.log('[Auto Order] 已到达目标图片，等待用户标注');
+      return;
+    }
+    
+    // 当前图片没有，尝试下一张
+    if (window.navigateToNextImage) {
+      const success = window.navigateToNextImage(true);
+      if (success) {
+        // 延迟一点时间等待图片加载
+        setTimeout(() => this.findBuiltinOrderFromCurrent(order), 300);
+      } else {
+        // 没有找到，回退到普通查找
+        console.log('[Auto Order] 没有找到builtin序号', order, '，使用普通查找');
+        this.navigateToFirstImageWithUnorderedAnnotations();
+      }
+    } else {
+      console.error('[Auto Order] 找不到navigateToNextImage函数');
+      this.navigateToFirstImageWithUnorderedAnnotations();
+    }
+  }
+  
+  /**
+   * 🔧 NEW: 保存当前图片的标注
+   */
+  saveCurrentImageAnnotations() {
+    if (!this.plantDataManager || !this.currentImage) return;
+    
+    this.plantDataManager.saveAnnotationsForImage(this.currentImage, this.keypoints);
   }
 }

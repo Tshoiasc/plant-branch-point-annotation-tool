@@ -50,6 +50,15 @@ export class CustomAnnotationManager {
     
     // 🔧 NEW: Ensure builtin regular type exists for migrated data
     this.ensureBuiltinRegularType();
+
+    // 🔧 NEW: Default mode to builtin regular type on first load
+    if (this.currentMode === 'normal' && !this.selectedCustomType && this.customTypes.has('builtin-regular-keypoint')) {
+      try {
+        this.setCustomAnnotationMode('builtin-regular-keypoint');
+      } catch (e) {
+        console.warn('Failed to set default builtin type mode:', e);
+      }
+    }
     
     console.log('CustomAnnotationManager initialized');
   }
@@ -227,7 +236,7 @@ export class CustomAnnotationManager {
    * @returns {Object} 创建的标注对象
    */
   createCustomAnnotation(annotationData) {
-    const { typeId, x, y, width, height, imageId, metadata = {} } = annotationData;
+    const { typeId, x, y, width, height, imageId, metadata = {}, parentAnnotationType, parentAnnotationId } = annotationData;
     
     // 验证必要字段
     if (!typeId || !imageId || x === undefined || y === undefined) {
@@ -275,6 +284,7 @@ export class CustomAnnotationManager {
       imageId,
       order,
       metadata,
+      ...(parentAnnotationType && parentAnnotationId && { parentAnnotationType, parentAnnotationId }),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };

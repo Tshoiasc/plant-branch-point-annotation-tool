@@ -15,8 +15,8 @@
   <!-- Main stylesheet -->
   
   <!-- Enhanced Auto Direction styles -->
-  <script type="module" crossorigin src="/assets/index-BJYlm9zQ.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CCPiG0oq.css">
+  <script type="module" crossorigin src="/assets/index-CyUrRCl5.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-W1Xy90TM.css">
   <script type="module">import.meta.url;import("_").catch(()=>1);(async function*(){})().next();if(location.protocol!="file:"){window.__vite_is_modern_browser=true}</script>
   <script type="module">!function(){if(window.__vite_is_modern_browser)return;console.warn("vite: loading legacy chunks, syntax error above and the same error below should be ignored");var e=document.getElementById("vite-legacy-polyfill"),n=document.createElement("script");n.src=e.src,n.onload=function(){System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))},document.body.appendChild(n)}();</script>
 </head>
@@ -193,6 +193,11 @@
                       <option value="cross-sectional">Vertical (Order by Order) - Complete order #1 across all images, then order #2</option>
                     </select>
                   </div>
+                  <div class="auto-order-controls" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <button id="auto-order-btn" class="btn btn-small btn-info" title="Start automated order assignment">Auto Order</button>
+                    <span id="auto-order-status" class="status-text" style="font-size: 12px; color: #666;"></span>
+                  </div>
+
                   <div id="auto-direction-progress" class="progress-indicator" style="display: none;">
                     <div class="progress-text">
                       <span id="progress-current">0</span>/<span id="progress-total">0</span> 
@@ -763,6 +768,17 @@
                   </div>
                 </div>
 
+                <!-- Association group (optional) -->
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="associate-type-select">Associate to Parent Type</label>
+                    <select id="associate-type-select">
+                      <option value="">None</option>
+                    </select>
+                    <small>When set, each annotation can bind to a parent annotation (by order) from this type</small>
+                  </div>
+                </div>
+
                 <div class="form-group">
                   <label for="type-description">Description</label>
                   <textarea id="type-description" name="description" placeholder="Describe the purpose of this annotation type..."></textarea>
@@ -873,6 +889,6 @@
   <!-- Main Application Script -->
   <script nomodule>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
   <script nomodule crossorigin id="vite-legacy-polyfill" src="/assets/polyfills-legacy-B5LV1BWP.js"></script>
-  <script nomodule crossorigin id="vite-legacy-entry" data-src="/assets/index-legacy-DPzU8gji.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+  <script nomodule crossorigin id="vite-legacy-entry" data-src="/assets/index-legacy-CAAW-9LT.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
 </body>
 </html>
